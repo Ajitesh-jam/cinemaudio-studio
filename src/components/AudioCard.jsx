@@ -90,7 +90,7 @@ const AudioCard = ({
           </div>
 
           {/* Curve Selectors */}
-          <div className="flex gap-4 mt-4">
+          {/* <div className="flex gap-4 mt-4">
             <CurveSelector 
               value={fadeInCurve} 
               onChange={setFadeInCurve}
@@ -101,7 +101,7 @@ const AudioCard = ({
               onChange={setFadeOutCurve}
               type="fade-out"
             />
-          </div>
+          </div> */}
         </div>
 
         {/* Mixer Section */}

@@ -3,7 +3,7 @@ import { useState } from "react";
 
 const DraggableMarker = ({ 
   position = 20, 
-  containerWidth = 600,
+  containerWidth = 1600,
   onPositionChange,
   label = "Marker",
   color = "primary" 
