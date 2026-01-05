@@ -60,11 +60,11 @@ const AudioCard = ({
       <div className="flex gap-4">
         {/* Timeline Section */}
         <div className="flex-1">
-          <TimelineRuler duration={duration} width={400} />
+          <TimelineRuler duration={duration} width={1000} />
           
           <div className="relative mt-2">
             <Waveform 
-              width={400} 
+              width={1000} 
               height={80} 
               bars={50}
               isPlaying={isPlaying}
@@ -75,7 +75,7 @@ const AudioCard = ({
             {/* Draggable Markers */}
             <DraggableMarker
               position={fadeIn}
-              containerWidth={400}
+              containerWidth={1400}
               onPositionChange={setFadeIn}
               label="Fade In"
               color="primary"

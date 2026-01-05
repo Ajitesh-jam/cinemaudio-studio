@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 
-const TimelineRuler = ({ duration = 10, width = 600 }) => {
+const TimelineRuler = ({ duration = 100, width = 1600 }) => {
   const markers = [];
   const majorInterval = 1; // 1 second
   const minorInterval = 0.5; // 0.5 second

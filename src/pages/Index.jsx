@@ -62,11 +62,12 @@ const Index = () => {
                 }}
                 transition={{ duration: 2, repeat: Infinity }}
               >
-                <span className="text-primary-foreground font-display text-sm font-bold">CA</span>
+                <span className="text-primary-foreground font-display text-sm font-bold">BGM</span>
               </motion.div>
               <span className="font-display text-lg">
-                <span className="text-foreground">Cinem</span>
-                <span className="text-primary">Audio</span>
+                <span className="text-foreground">Back</span>
+                <span className="text-primary">Ground</span>
+                <span className="text-foreground">Mellow</span>
               </span>
             </div>
             
@@ -151,7 +152,7 @@ const Index = () => {
         <footer className="border-t border-border/30 py-8 mt-12">
           <div className="container mx-auto px-4 text-center">
             <p className="text-xs text-muted-foreground">
-              <span className="font-display tracking-wider">CINEMAUDIO ENGINE</span>
+              <span className="font-display tracking-wider">BackGroundMellow ENGINE</span>
               {" · "}
               <span className="font-mono">Powered by AI</span>
             </p>

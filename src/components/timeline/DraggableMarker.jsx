@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 
 const DraggableMarker = ({ 
-  position = 0, 
+  position = 20, 
   containerWidth = 600,
   onPositionChange,
   label = "Marker",

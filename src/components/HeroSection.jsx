@@ -2,20 +2,33 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 import { Sparkles, Wand2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Textarea } from "./ui/textarea";
 import AnimatedLoader from "./ui/AnimatedLoader";
 
 const HeroSection = ({ onDecompose }) => {
   const [storyText, setStoryText] = useState("");
   const [isDecomposing, setIsDecomposing] = useState(false);
 
-  const handleDecompose = async () => {
-    if (!storyText.trim()) return;
+  const handleDecompose = async (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    console.log("Button clicked! Story text:", storyText);
     
+    if (!storyText.trim()) {
+      console.log("No text, returning early");
+      return;
+    }
+    
+    console.log("Starting decomposition...");
     setIsDecomposing(true);
     // Simulate processing
     await new Promise(resolve => setTimeout(resolve, 3000));
     setIsDecomposing(false);
     onDecompose?.(storyText);
+  };
+
+  const handleTextChange = (e) => {
+    setStoryText(e.target.value);
   };
 
   return (
@@ -39,8 +52,9 @@ const HeroSection = ({ onDecompose }) => {
           transition={{ delay: 0.2, duration: 0.6 }}
         >
           <h1 className="font-display text-4xl md:text-6xl font-bold mb-2">
-            <span className="text-foreground">Cinem</span>
-            <span className="text-primary neon-text">Audio</span>
+            <span className="text-foreground">Back</span>
+            <span className="text-primary neon-text">Ground</span>
+            <span className="text-foreground">Mellow</span>
           </h1>
           <p className="font-display text-sm tracking-[0.3em] text-muted-foreground mb-8">
             AI-POWERED CINEMATIC SOUNDSCAPES
@@ -61,23 +75,22 @@ const HeroSection = ({ onDecompose }) => {
             </span>
           </div>
           
-          <textarea
-            value={storyText}
-            onChange={(e) => setStoryText(e.target.value)}
-            placeholder="Enter your narrative... e.g., 'The rain pattered against the window as thunder rolled in the distance. A car engine hummed to life, tires crunching on gravel as it pulled away into the stormy night.'"
-            className="w-full h-32 bg-muted/30 rounded-lg p-4 text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-          />
-          
+          <div className="relative">
+            <Textarea
+              id="story-input"
+              value={storyText}
+              onChange={handleTextChange}
+              placeholder="Enter your narrative... e.g., 'The rain pattered against the window as thunder rolled in the distance. A car engine hummed to life, tires crunching on gravel as it pulled away into the stormy night.'"
+              className="w-full min-h-[128px] bg-muted/30 text-foreground placeholder:text-muted-foreground/50 resize-none"
+            />
+          </div>
+
           {isDecomposing ? (
             <div className="mt-6">
               <AnimatedLoader text="DECOMPOSING NARRATIVE..." />
             </div>
           ) : (
-            <motion.div
-              className="mt-6"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-            >
+            <div className="mt-6">
               <Button
                 onClick={handleDecompose}
                 disabled={!storyText.trim()}
@@ -86,7 +99,7 @@ const HeroSection = ({ onDecompose }) => {
                 <Wand2 className="w-4 h-4 mr-2" />
                 DECOMPOSE STORY
               </Button>
-            </motion.div>
+            </div>
           )}
         </motion.div>
       </div>
