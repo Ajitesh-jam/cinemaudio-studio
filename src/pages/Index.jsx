@@ -12,16 +12,22 @@ const sampleAudioCues = [
     id: 1,
     type: "Ambience",
     prompt: "Heavy rain with distant thunder rolling",
+    duration: 10,
+    audioBase64:null
   },
   {
     id: 2,
     type: "SFX",
     prompt: "Car engine starting, tires on gravel",
+    duration: 10,
+    audioBase64:null
   },
   {
     id: 3,
     type: "Music",
     prompt: "Tense orchestral underscore, low strings",
+    duration: 10,
+    audioBase64:null
   },
 ];
 
@@ -31,7 +37,91 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleDecompose = (storyText) => {
-    setAudioCues(sampleAudioCues);
+
+    // INSERT_YOUR_CODE
+    const backendEndpoint = import.meta.env.VITE_BACKEND_ENDPOINT || "http://localhost:8000";
+    setIsLoading(true);
+    fetch(`${backendEndpoint}/api/v1/decide-cues`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        story_text: storyText,
+        speed_wps: 2
+      })
+    })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("Failed to fetch audio cues");
+      return response.json();
+    })
+    .then((data) => {
+      // Map cues to AudioCard-like objects if needed; otherwise, just use cues as-is
+
+      console.log("data :", data);
+
+
+      const cues = data?.cues || [];
+      // For demonstration, wrap in default structure expected by AudioCard
+      const mappedCues = cues.map((cue, idx) => ({
+        id: idx + 1,
+        type: cue.audio_type || "SFX",
+        prompt: cue.audio_class || "",
+        duration: cue.duration_ms || 10,
+        audioBase64: cue.audio_base64 || null
+      }));
+
+      console.log("cues :", cues);
+
+      // INSERT_YOUR_CODE
+      // Step 1: Call the /api/v1/generate-audio API on the backend
+      fetch(`${backendEndpoint}/api/v1/generate-audio`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          cues: [
+            {
+              audio_class: "dog barking",
+              audio_type: "SFX",
+              start_time_ms: 0,
+              duration_ms: 1000,
+              weight_db: 0,
+              fade_ms: 500
+            }
+          ],
+          total_duration_ms: data?.total_duration_ms ?? 1000
+        })
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Failed to generate audio");
+          return await res.json();
+        })
+        .then((audioData) => {
+          // audioData: { audio_base64, duration_ms, message }
+          // Attach base64 audio to the first cue for demo (could be improved with real mapping)
+          if (mappedCues.length > 0) {
+            mappedCues[0].audioBase64 = audioData.audio_base64;
+            mappedCues[0].duration = audioData.duration_ms || mappedCues[0].duration;
+          }
+          setAudioCues([...mappedCues]);
+        })
+        .catch((err) => {
+          // fallback to default mappedCues on audio-generation error
+          setAudioCues(mappedCues);
+        });
+
+      setAudioCues(mappedCues);
+    })
+    .catch((err) => {
+      // fallback to sample on error for demo
+      setAudioCues(sampleAudioCues);
+      // Optionally: set error state
+      // setError(err.message);
+    })
+    .finally(() => setIsLoading(false));
+
   };
 
   const handleMasterMix = () => {
