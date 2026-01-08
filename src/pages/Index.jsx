@@ -1,87 +1,104 @@
-import { useState } from "react";
+import { memo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import HeroSection from "../components/HeroSection";
 import AudioCard from "../components/AudioCard";
 import MasterMixButton from "../components/MasterMixButton";
-import EvaluationGrid from "../components/EvaluationGrid";
+import FinalAudioPlayer from "../components/FinalAudioPlayer";
+import EvaluationForm from "../components/EvaluationForm";
 import FloatingParticles from "../components/FloatingParticles";
-import AnimatedLoader from "../components/ui/AnimatedLoader";
+import useAudioStore from "../store/useAudioStore";
 
 const sampleAudioCues = [
   {
     id: 1,
     type: "Ambience",
     prompt: "Heavy rain with distant thunder rolling",
+    duration_ms: 10000,
+    fade_ms: 500,
+    weight_db: 0,
   },
   {
     id: 2,
     type: "SFX",
     prompt: "Car engine starting, tires on gravel",
+    duration_ms: 5000,
+    fade_ms: 300,
+    weight_db: -3,
   },
   {
     id: 3,
     type: "Music",
     prompt: "Tense orchestral underscore, low strings",
+    duration_ms: 15000,
+    fade_ms: 1000,
+    weight_db: -6,
   },
 ];
 
+const Header = memo(() => (
+  <motion.header 
+    className="border-b border-border/30 backdrop-blur-sm bg-background/50 sticky top-0 z-50"
+    initial={{ y: -20, opacity: 0 }}
+    animate={{ y: 0, opacity: 1 }}
+  >
+    <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
+          <span className="text-primary-foreground font-display text-sm font-bold">BGM</span>
+        </div>
+        <span className="font-display text-lg">
+          <span className="text-foreground">Back</span>
+          <span className="text-primary">Ground</span>
+          <span className="text-foreground">Mellow</span>
+        </span>
+      </div>
+      <div className="flex items-center gap-4">
+        <span className="text-xs text-muted-foreground font-mono">v1.0.0-beta</span>
+        <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+      </div>
+    </div>
+  </motion.header>
+));
+
+Header.displayName = "Header";
+
 const Index = () => {
-  const [audioCues, setAudioCues] = useState([]);
-  const [showEvaluation, setShowEvaluation] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const audioCues = useAudioStore(state => state.audioCues);
+  const setAudioCues = useAudioStore(state => state.setAudioCues);
+  const updateAudioCue = useAudioStore(state => state.updateAudioCue);
+  const regenerateAudioCue = useAudioStore(state => state.regenerateAudioCue);
+  const finalAudio = useAudioStore(state => state.finalAudio);
+  const setFinalAudio = useAudioStore(state => state.setFinalAudio);
 
-  const handleDecompose = (storyText) => {
+  const handleDecompose = useCallback(() => {
     setAudioCues(sampleAudioCues);
-  };
+  }, [setAudioCues]);
 
-  const handleMasterMix = () => {
-    setShowEvaluation(true);
-  };
+  const handleMasterMix = useCallback(() => {
+    // Set demo final audio (would come from API in production)
+    setFinalAudio({ audioBase64: null, duration: 30 });
+  }, [setFinalAudio]);
+
+  const handleUpdateCue = useCallback((id) => (updates) => {
+    updateAudioCue(id, updates);
+  }, [updateAudioCue]);
+
+  const handleRegenerate = useCallback((id, prompt) => {
+    regenerateAudioCue(id, prompt);
+  }, [regenerateAudioCue]);
+
+  const handleSaveResults = useCallback((data) => {
+    console.log("Saved evaluation:", data);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background relative">
-      <FloatingParticles count={40} />
+      <FloatingParticles count={25} />
       
       <div className="relative z-10">
-        {/* Header */}
-        <motion.header 
-          className="border-b border-border/30 backdrop-blur-sm bg-background/50 sticky top-0 z-50"
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-        >
-          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <motion.div 
-                className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center"
-                animate={{ 
-                  boxShadow: [
-                    "0 0 10px hsl(var(--primary) / 0.5)",
-                    "0 0 20px hsl(var(--primary) / 0.8)",
-                    "0 0 10px hsl(var(--primary) / 0.5)",
-                  ]
-                }}
-                transition={{ duration: 2, repeat: Infinity }}
-              >
-                <span className="text-primary-foreground font-display text-sm font-bold">BGM</span>
-              </motion.div>
-              <span className="font-display text-lg">
-                <span className="text-foreground">Back</span>
-                <span className="text-primary">Ground</span>
-                <span className="text-foreground">Mellow</span>
-              </span>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <span className="text-xs text-muted-foreground font-mono">v1.0.0-beta</span>
-              <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
-            </div>
-          </div>
-        </motion.header>
-
-        {/* Hero Section */}
+        <Header />
         <HeroSection onDecompose={handleDecompose} />
 
-        {/* Audio Cues Section */}
         <AnimatePresence>
           {audioCues.length > 0 && (
             <motion.section
@@ -89,7 +106,6 @@ const Index = () => {
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -40 }}
-              transition={{ duration: 0.5 }}
             >
               <div className="flex items-center gap-2 mb-6">
                 <div className="w-1 h-6 bg-gradient-to-b from-primary to-secondary rounded-full" />
@@ -102,28 +118,21 @@ const Index = () => {
               </div>
 
               <div className="space-y-4">
-                {audioCues.map((cue, index) => (
-                  <motion.div
+                {audioCues.map((cue) => (
+                  <AudioCard
                     key={cue.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.15 }}
-                  >
-                    <AudioCard
-                      id={cue.id}
-                      type={cue.type}
-                      prompt={cue.prompt}
-                    />
-                  </motion.div>
+                    {...cue}
+                    handleUpdate={handleUpdateCue(cue.id)}
+                    onRegenerate={handleRegenerate}
+                  />
                 ))}
               </div>
 
-              {/* Master Mix Button */}
               <motion.div 
                 className="mt-12 flex justify-center"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                transition={{ delay: 0.5 }}
+                transition={{ delay: 0.3 }}
               >
                 <MasterMixButton 
                   onMix={handleMasterMix}
@@ -134,21 +143,24 @@ const Index = () => {
           )}
         </AnimatePresence>
 
-        {/* Evaluation Section */}
+        {/* Final Audio & Evaluation */}
         <AnimatePresence>
-          {showEvaluation && (
+          {finalAudio && (
             <motion.section
-              className="container mx-auto px-4 pb-12"
+              className="container mx-auto px-4 pb-12 space-y-6"
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
             >
-              <EvaluationGrid />
+              <FinalAudioPlayer 
+                audioBase64={finalAudio.audioBase64}
+                duration={finalAudio.duration}
+              />
+              <EvaluationForm onSave={handleSaveResults} />
             </motion.section>
           )}
         </AnimatePresence>
 
-        {/* Footer */}
         <footer className="border-t border-border/30 py-8 mt-12">
           <div className="container mx-auto px-4 text-center">
             <p className="text-xs text-muted-foreground">
