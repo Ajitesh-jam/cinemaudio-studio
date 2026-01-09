@@ -54,3 +54,14 @@ class GenerateAudioCuesWithAudioBase64Request(BaseModel):
 class GenerateAudioCuesWithAudioBase64Response(BaseModel):
     audio_base64: str = Field(..., description="Base64 encoded WAV audio data")
     message: str = Field(..., description="Message indicating success or failure")
+    
+class EvaluateAudioRequest(BaseModel):
+    audio_base64: str = Field(..., description="Base64 encoded WAV audio data")
+    text: str = Field(..., description="The text to evaluate the audio against")
+    
+class EvaluateAudioResponse(BaseModel):
+    clap_score: float = Field(..., description="The CLAP score of the audio")
+    spectral_richness: float = Field(..., description="The spectral richness of the audio")
+    noise_floor: float = Field(..., description="The noise floor of the audio")
+    audio_onsets: int = Field(..., description="The number of audio onsets in the audio")
+    message: str = Field(..., description="Message indicating success or failure")

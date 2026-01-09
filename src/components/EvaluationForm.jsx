@@ -21,62 +21,17 @@ import {
 } from "./ui/table";
 
 
-const automatedMetrics = [
-  { name: "CLAP Score", value: 0.92, target: 0.85, description: "Audio-text alignment" },
-  { name: "Spectral Richness", value: 0.78, target: 0.70, description: "Frequency distribution" },
-  { name: "Dynamic Range", value: 0.85, target: 0.80, description: "Loudness variation" },
-  { name: "Noise Floor", value: -60, target: -50, description: "dB below signal", isLower: true },
-];
 
-// Helper function to extract Google Drive folder ID from URL
-const extractDriveFolderId = (link) => {
-  if (!link) return null;
-  
-  // Handle direct ID
-  if (!link.includes('http') && !link.includes('/')) {
-    return link;
-  }
-  
-  // Handle full URL: https://drive.google.com/drive/folders/FOLDER_ID
-  const foldersMatch = link.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-  if (foldersMatch) {
-    return foldersMatch[1];
-  }
-  
-  // Handle short URL or other formats
-  const idMatch = link.match(/([a-zA-Z0-9_-]{25,})/);
-  if (idMatch) {
-    return idMatch[1];
-  }
-  
-  return null;
+// Mapping for automated metrics: state key -> display metadata
+const automatedMetricsConfig = {
+  clapScore: { name: "CLAP Score", target: 0.25, isLower: false, format: "percent" },
+  spectralRichness: { name: "Spectral Richness", target: 0.70, isLower: false, format: "float" },
+  noiseFloor: { name: "Noise Floor", target: -50, isLower: true, format: "db" },
+  audioOnsets: { name: "Audio Onsets", target: 10, isLower: false, format: "number" },
 };
 
-// Helper function to extract Google Sheets ID from URL
-const extractSheetId = (link) => {
-  if (!link) return null;
-  
-  // Handle direct ID
-  if (!link.includes('http') && !link.includes('/')) {
-    return link;
-  }
-  
-  // Handle full URL: https://docs.google.com/spreadsheets/d/SHEET_ID/edit
-  const spreadsheetsMatch = link.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  if (spreadsheetsMatch) {
-    return spreadsheetsMatch[1];
-  }
-  
-  // Handle short URL or other formats
-  const idMatch = link.match(/([a-zA-Z0-9_-]{25,})/);
-  if (idMatch) {
-    return idMatch[1];
-  }
-  
-  return null;
-};
 
-const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLink }) => {
+const EvaluationForm = memo(({ audioBase64, storyText }) => {
   const [step, setStep] = useState("form");
   const [personName, setPersonName] = useState("");
   const [humanScores, setHumanScores] = useState({
@@ -84,9 +39,17 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
     syncAccuracy: 0,
     atmosphericDepth: 0,
   });
+
+  const [autoMetrics, setAutoMetrics] = useState({
+    clapScore: 0,
+    spectralRichness: 0,
+    noiseFloor: 0,
+    audioOnsets: 0,
+  });
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null); // null, 'saving', 'success', 'error'
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
 
   const handleScoreChange = useCallback((key, value) => {
     setHumanScores(prev => ({ ...prev, [key]: value }));
@@ -94,9 +57,81 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
 
   const isFormValid = personName.trim() && Object.values(humanScores).every(v => v > 0);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
+    if (!audioBase64) {
+      alert("No audio data available for evaluation.");
+      return;
+    }
+
+    setIsLoadingMetrics(true);
+
+    // Call backend to get automated metrics for audio evaluation
+    let autoMetrics = {
+      clapScore: 0,
+      spectralRichness: 0,
+      noiseFloor: 0,
+      audioOnsets: 0,
+      message: "",
+    };
+
+    try {
+      // Extract base64 string (remove data URL prefix if present)
+      const base64Data = audioBase64.includes(',') 
+        ? audioBase64.split(',')[1] 
+        : audioBase64;
+
+      // Call API (use /api/v1/evaluate-audio endpoint)
+      const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
+      const response = await fetch(`${apiBase}/v1/evaluate-audio`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audio_base64: base64Data,
+          text: storyText || "N/A",
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Adapt keys to expected format for saving
+        autoMetrics = {
+          clapScore: data.clap_score || 0,
+          spectralRichness: data.spectral_richness || 0,
+          noiseFloor: data.noise_floor || 0,
+          audioOnsets: data.audio_onsets || 0,
+          message: data.message || "Successfully evaluated audio"
+        };
+        console.log("Successfully fetched automated metrics:", autoMetrics);
+      } else {
+        // Fallback to default values if API fails
+        const errorText = await response.text().catch(() => "Unknown error");
+        autoMetrics = {
+          clapScore: 0,
+          spectralRichness: 0,
+          noiseFloor: 0,
+          audioOnsets: 0,
+          message: `Failed to fetch automated metrics: ${response.status} ${errorText}`
+        };
+        console.error("Failed to get metrics from backend:", response.status, errorText);
+      }
+    } catch (error) {
+      // Fallback to default values on error
+      autoMetrics = {
+        clapScore: 0,
+        spectralRichness: 0,
+        noiseFloor: 0,
+        audioOnsets: 0,
+        message: `Error calling backend: ${error.message || error}`
+      };
+      console.error("Error fetching audio metrics:", error);
+    } finally {
+      setIsLoadingMetrics(false);
+    }
+    
+    setAutoMetrics(autoMetrics);
     setStep("results");
-  }, []);
+
+  }, [audioBase64, storyText]);
 
   // Calculate final score from human scores (average * 2 to get 0-10 scale)
   const calculateFinalScore = useCallback(() => {
@@ -108,21 +143,6 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
   const handleSave = useCallback(async () => {
     if (!audioBase64) {
       alert("No audio data available to save.");
-      return;
-    }
-
-    // Extract folder ID and sheet ID from links
-    const driveFolderId = extractDriveFolderId(driveFolderLink);
-    const sheetId = extractSheetId(sheetLink);
-
-    // Validate that IDs were extracted correctly
-    if (!driveFolderId) {
-      alert("Error: Could not extract Google Drive folder ID. Please check the folder link.");
-      return;
-    }
-
-    if (!sheetId) {
-      alert("Error: Could not extract Google Sheets ID. Please check the sheet link.");
       return;
     }
 
@@ -150,28 +170,15 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
       reader.onloadend = async () => {
         try {
           const base64Audio = reader.result;
-          
-          // Calculate automated metrics (using placeholder values for now)
-          const autoMetrics = {
-            clapScore: 0.92,
-            spectralRichness: 0.78,
-            dynamicRange: 0.85,
-            noiseFloor: -60
-          };
-          
-          const finalScore = calculateFinalScore();
-    
           const payload = {
             personName,
             humanScores, // { dramatization, syncAccuracy, atmosphericDepth }
             feedback,
             autoMetrics, // { clapScore, spectralRichness, etc. }
-            finalScore: finalScore.toFixed(1),
+            finalScore: calculateFinalScore().toFixed(1),
             storyPrompt: storyText || "N/A",
             audioFile: base64Audio,
             timestamp: new Date().toLocaleString(),
-            driveFolderId, // Google Drive folder ID
-            sheetId // Google Sheets ID
           };
     
           // Send to Google Apps Script which will handle:
@@ -221,7 +228,7 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
         setSaveStatus(null);
       }, 500);
     }
-  }, [personName, humanScores, feedback, audioBase64, storyText, calculateFinalScore, driveFolderLink, sheetLink]);
+  }, [personName, humanScores, feedback, audioBase64, storyText, calculateFinalScore]);
 
 
 
@@ -229,6 +236,7 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
     const passed = isLower ? value <= target : value >= target;
     return passed ? "text-emerald-400" : "text-rose-400";
   };
+
 
   if (step === "form") {
     return (
@@ -301,12 +309,21 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
         </div>
 
         <Button
-          disabled={!isFormValid}
+          disabled={!isFormValid || isLoadingMetrics}
           onClick={handleSubmit}
           className="w-full mt-6"
         >
-          View Results
-          <ArrowRight className="ml-2 w-4 h-4" />
+          {isLoadingMetrics ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Evaluating Audio...
+            </>
+          ) : (
+            <>
+              View Results
+              <ArrowRight className="ml-2 w-4 h-4" />
+            </>
+          )}
         </Button>
       </motion.div>
     );
@@ -366,22 +383,48 @@ const EvaluationForm = memo(({ audioBase64, storyText, driveFolderLink, sheetLin
               </TableCell>
             </TableRow>
           ))}
-          {automatedMetrics.map((metric) => (
-            <TableRow key={metric.name} className="border-border/20">
-              <TableCell>
-                <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded">Auto</span>
-              </TableCell>
-              <TableCell className="text-foreground text-sm">{metric.name}</TableCell>
-              <TableCell className={`text-right font-mono ${getStatusColor(metric.value, metric.target, metric.isLower)}`}>
-                {metric.value < 1 && metric.value > -1
-                  ? (metric.value * 100).toFixed(0) + '%'
-                  : metric.value + (metric.isLower ? ' dB' : '')}
-              </TableCell>
-              <TableCell className="text-center">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mx-auto" />
-              </TableCell>
-            </TableRow>
-          ))}
+          {autoMetrics && Object.entries(autoMetrics)
+            .filter(([key]) => key !== 'message') // Exclude message from display
+            .map(([key, value]) => {
+              const config = automatedMetricsConfig[key];
+              if (!config) return null; // Skip if no config found
+              
+              const { name, target, isLower, format } = config;
+              const passed = isLower ? value <= target : value >= target;
+              
+              // Format the value based on type
+              let formattedValue;
+              if (format === "percent") {
+                formattedValue = (value * 100).toFixed(0) + '%';
+              } else if (format === "db") {
+                formattedValue = value.toFixed(1) + ' dB';
+              } else if (format === "float") {
+                formattedValue = value.toFixed(3);
+              } else {
+                formattedValue = value.toFixed(0);
+              }
+              
+              return (
+                <TableRow key={key} className="border-border/20">
+                  <TableCell>
+                    <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded">Algorithmic</span>
+                  </TableCell>
+                  <TableCell className="text-foreground text-sm">{name}</TableCell>
+                  <TableCell className={`text-right font-mono ${getStatusColor(value, target, isLower)}`}>
+                    {formattedValue}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {passed ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 mx-auto" />
+                    ) : (
+                      <Star className="w-4 h-4 text-muted-foreground mx-auto" />
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })
+            .filter(Boolean) // Remove null entries
+          }
         </TableBody>
       </Table>
 

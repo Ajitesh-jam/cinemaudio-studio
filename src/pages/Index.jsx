@@ -44,8 +44,6 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [finalAudio, setFinalAudio] = useState(null);
 
-  console.log("finalAudio :", finalAudio);
-
   const handleDecompose = (storyText) => {
 
     // INSERT_YOUR_CODE
@@ -330,7 +328,7 @@ const Index = () => {
         </AnimatePresence>
 
 
-        Final Audio & Evaluation
+        {/* Final Audio & Evaluation */}
         <AnimatePresence>
           {finalAudio && finalAudio.audioBase64 && (
             <motion.section

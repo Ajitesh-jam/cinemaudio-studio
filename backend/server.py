@@ -26,6 +26,8 @@ from Variable.dataclases import (
     AudioCueWithAudioBase64,
     DecideCuesRequest,
     DecideCuesResponse,
+    EvaluateAudioRequest,
+    EvaluateAudioResponse,
     GenerateAudioFromCuesRequest,
     GenerateAudioFromCuesResponse,
     GenerateFromStoryRequest,GenerateFromStoryResponse,
@@ -35,6 +37,7 @@ from Variable.dataclases import (
 from Variable.configurations import READING_SPEED_WPS
 from Tools.decide_audio import decide_audio_cues
 from superimposition_model.superimposition_model import superimpose_audio_cues, superimpose_audio_cues_with_audio_base64,superimposition_model
+from Evaluation.evaluator import AudioEvaluator
 from helper.audio_conversions import audio_to_base64
 from helper.parallel_audio_generation import parallel_audio_generation
 
@@ -210,6 +213,41 @@ async def generate_from_story(request: GenerateFromStoryRequest):
             detail=f"Error generating audio from story: {str(e)}"
         )
 
+@app.post("/api/v1/evaluate-audio", response_model=EvaluateAudioResponse)
+async def evaluate_audio(request: EvaluateAudioRequest):
+    """
+    Evaluate audio based on text and audio base64.
+    Returns CLAP score, spectral richness, noise floor, and audio onsets.
+    """
+    try:
+        logger.info("Evaluating audio...")
+        evaluator = AudioEvaluator()
+        
+        # Get CLAP score (text-audio alignment)
+        clap_score = evaluator.get_clap_score(request.audio_base64, request.text)
+        
+        # Get spectral richness (returns flatness, entropy)
+        flatness, spectral_entropy = evaluator.get_audio_richness(request.audio_base64)
+        
+        # Get noise floor
+        noise_floor = evaluator.get_noise_floor(request.audio_base64)
+        
+        # Get audio onsets (sync detection)
+        audio_onsets = evaluator.evaluate_sync_from_audio_base64(request.audio_base64)
+        
+        return EvaluateAudioResponse(
+            clap_score=float(clap_score),
+            spectral_richness=float(spectral_entropy),  # Use entropy as spectral richness
+            noise_floor=float(noise_floor),
+            audio_onsets=int(audio_onsets),
+            message="Successfully evaluated audio"
+        )   
+    except Exception as e:
+        logger.error(f"Error evaluating audio: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error evaluating audio: {str(e)}"
+        )
 
 if __name__ == "__main__":
     # Run the server
