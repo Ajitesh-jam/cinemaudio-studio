@@ -3,9 +3,15 @@ import { motion, AnimatePresence } from "framer-motion";
 import HeroSection from "../components/HeroSection";
 import AudioCard from "../components/AudioCard";
 import MasterMixButton from "../components/MasterMixButton";
-import EvaluationGrid from "../components/EvaluationGrid";
 import FloatingParticles from "../components/FloatingParticles";
 import AnimatedLoader from "../components/ui/AnimatedLoader";
+import FinalAudioPlayer from "../components/FinalAudioPlayer";
+import EvaluationForm from "../components/EvaluationForm.jsx";
+
+// Google Drive and Sheets configuration
+// TODO: Replace these with your actual Google Drive folder and Google Sheets links
+const GOOGLE_DRIVE_FOLDER_LINK = import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_LINK || "https://drive.google.com/drive/folders/12dhku5E1uZrFME68fRJd2rnEl_Le3y8P?usp=sharing";
+const GOOGLE_SHEETS_LINK = import.meta.env.VITE_GOOGLE_SHEETS_LINK || "https://docs.google.com/spreadsheets/d/1EgWl5yfGMz0aOja6BAt8JiJnwo7MKCyHKQa3mqQSHWQ/edit?usp=sharing";
 
 const sampleAudioCues = [
   {
@@ -32,16 +38,21 @@ const sampleAudioCues = [
 ];
 
 const Index = () => {
+  const [storyText, setStoryText] = useState("");
   const [audioCues, setAudioCues] = useState([]);
   const [showEvaluation, setShowEvaluation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [finalAudio, setFinalAudio] = useState(null);
+
+  console.log("finalAudio :", finalAudio);
 
   const handleDecompose = (storyText) => {
 
     // INSERT_YOUR_CODE
-    const backendEndpoint = import.meta.env.VITE_BACKEND_ENDPOINT || "http://localhost:8000";
+    // Use relative path to leverage Vite proxy in development
+    const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
     setIsLoading(true);
-    fetch(`${backendEndpoint}/api/v1/decide-cues`, {
+    fetch(`${apiBase}/v1/decide-cues`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -58,39 +69,38 @@ const Index = () => {
     .then((data) => {
       // Map cues to AudioCard-like objects if needed; otherwise, just use cues as-is
 
-      console.log("data :", data);
-
-
       const cues = data?.cues || [];
       // For demonstration, wrap in default structure expected by AudioCard
-      const mappedCues = cues.map((cue, idx) => ({
-        id: idx + 1,
-        type: cue.audio_type || "SFX",
-        prompt: cue.audio_class || "",
-        duration: cue.duration_ms || 10,
-        audioBase64: cue.audio_base64 || null
+      let mappedCues = cues.map((cue) => ({
+        id: cue.id,
+        audio_class: cue.audio_class || "",
+        audio_type: cue.audio_type || "SFX",
+        start_time_ms: cue.start_time_ms || 0,
+        duration_ms: cue.duration_ms || 10,
+        weight_db: cue.weight_db || 0,
+        fade_ms: cue.fade_ms || 500,
+        audioBase64: null
       }));
 
-      console.log("cues :", cues);
+      console.log("mappedCues :", mappedCues);
 
       // INSERT_YOUR_CODE
       // Step 1: Call the /api/v1/generate-audio API on the backend
-      fetch(`${backendEndpoint}/api/v1/generate-audio`, {
+      fetch(`${apiBase}/v1/generate-audio`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          cues: [
-            {
-              audio_class: "dog barking",
-              audio_type: "SFX",
-              start_time_ms: 0,
-              duration_ms: 1000,
-              weight_db: 0,
-              fade_ms: 500
-            }
-          ],
+          cues: mappedCues.map((cue) => ({
+            id: cue.id,
+            audio_class: cue.audio_class,
+            audio_type: cue.audio_type,
+            start_time_ms: cue.start_time_ms,
+            duration_ms: cue.duration_ms,
+            weight_db: cue.weight_db,
+            fade_ms: cue.fade_ms
+          })),
           total_duration_ms: data?.total_duration_ms ?? 1000
         })
       })
@@ -99,33 +109,119 @@ const Index = () => {
           return await res.json();
         })
         .then((audioData) => {
-          // audioData: { audio_base64, duration_ms, message }
-          // Attach base64 audio to the first cue for demo (could be improved with real mapping)
+          // Update mappedCues with audio data
           if (mappedCues.length > 0) {
-            mappedCues[0].audioBase64 = audioData.audio_base64;
-            mappedCues[0].duration = audioData.duration_ms || mappedCues[0].duration;
+            for (let i = 0; i < mappedCues.length; i++) {
+              if (
+                audioData.audio_cues[i]?.audio_base64 !== null &&
+                audioData.audio_cues[i]?.audio_base64 !== undefined &&
+                audioData.audio_cues[i]?.audio_cue?.id === mappedCues[i].id
+              ) {
+                mappedCues[i].audioBase64 = audioData.audio_cues[i].audio_base64;
+                mappedCues[i].duration_ms =
+                  audioData.audio_cues[i].duration_ms || mappedCues[i].duration_ms;
+              }
+            }
           }
-          setAudioCues([...mappedCues]);
+          
+          // Filter out cues that don't have audio before setting state
+          const cuesWithAudio = mappedCues.filter(cue => 
+            cue.audioBase64 !== null && 
+            cue.audioBase64 !== undefined && 
+            cue.audioBase64 !== ""
+          );
+          
+          console.log("mappedCues With Audio Base64:", cuesWithAudio);
+          
+          // Only set cues that have audio
+          if (cuesWithAudio.length > 0) {
+            setAudioCues(cuesWithAudio);
+          } else {
+            console.warn("No audio cues with audio data found");
+            setAudioCues([]);
+          }
+          
+          setIsLoading(false);
         })
         .catch((err) => {
-          // fallback to default mappedCues on audio-generation error
-          setAudioCues(mappedCues);
+          console.error("Error generating audio:", err);
+          // Don't set cues without audio
+          setAudioCues([]);
+          setIsLoading(false);
         });
-
-      setAudioCues(mappedCues);
     })
     .catch((err) => {
-      // fallback to sample on error for demo
-      setAudioCues(sampleAudioCues);
-      // Optionally: set error state
-      // setError(err.message);
-    })
-    .finally(() => setIsLoading(false));
+      console.error("Error fetching audio cues:", err);
+      setAudioCues([]);
+      setIsLoading(false);
+    });
 
   };
 
+  const handleUpdate = (cueId, updates) => {
+    setAudioCues(prevCues =>
+      prevCues.map(cue =>
+        cue.id === cueId ? { ...cue, ...updates } : cue
+      )
+    );
+  };
+
   const handleMasterMix = () => {
+
+    // Remove the extra duration_ms field from the root, since backend expects only audio_cue + audio_base64 per AudioCueWithAudioBase64
+    const cues = audioCues.map((cue) => ({
+      audio_cue: {
+        id: cue.id,
+        audio_class: cue.audio_class,
+        audio_type: cue.audio_type,
+        start_time_ms: cue.start_time_ms,
+        duration_ms: cue.duration_ms,
+        weight_db: cue.weight_db,
+        fade_ms: cue.fade_ms
+      },
+      audio_base64: cue.audioBase64,
+      duration_ms:cue.duration_ms
+    }));
+    console.log("cues :", cues);
+    const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
+    console.log("storyText :", storyText);
+    fetch(`${apiBase}/v1/generate-audio-cues-with-audio-base64`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        cues: cues,
+        story_text: storyText,
+        speed_wps: 2
+      })
+    })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("Failed to generate audio");
+      return response.json();
+    })
+    .then((data) => {
+      console.log("data :", data);
+      // Calculate duration from cues (max of start_time_ms + duration_ms)
+      const totalDurationMs = Math.max(
+        ...cues.map(cue => cue.audio_cue.start_time_ms + cue.audio_cue.duration_ms),
+        0
+      );
+      const durationSeconds = totalDurationMs / 1000;
+      
+      // Store as object with audioBase64 and duration for FinalAudioPlayer
+      setFinalAudio({
+        audioBase64: data.audio_base64 || null,
+        duration: durationSeconds
+      });
+    })
+    .catch((err) => {
+      console.error("Error generating audio:", err);
+    })
+    .finally(() => setIsLoading(false));
     setShowEvaluation(true);
+
+    return true;
   };
 
   return (
@@ -169,7 +265,7 @@ const Index = () => {
         </motion.header>
 
         {/* Hero Section */}
-        <HeroSection onDecompose={handleDecompose} />
+        <HeroSection isLoading={isLoading} onDecompose={handleDecompose} storyText={storyText} setStoryText={setStoryText} handleUpdate={handleUpdate} />
 
         {/* Audio Cues Section */}
         <AnimatePresence>
@@ -192,20 +288,28 @@ const Index = () => {
               </div>
 
               <div className="space-y-4">
-                {audioCues.map((cue, index) => (
-                  <motion.div
-                    key={cue.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.15 }}
-                  >
-                    <AudioCard
-                      id={cue.id}
-                      type={cue.type}
-                      prompt={cue.prompt}
-                    />
-                  </motion.div>
-                ))}
+                {audioCues
+                  .filter(cue => cue.audioBase64 && cue.audioBase64 !== null && cue.audioBase64 !== "")
+                  .map((cue, index) => (
+                    <motion.div
+                      key={cue.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.15 }}
+                    >
+                      <AudioCard
+                        id={cue.id}
+                        type={cue.audio_type}
+                        prompt={cue.audio_class}
+                        start_time_ms={cue.start_time_ms}
+                        duration_ms={cue.duration_ms}
+                        weight_db={cue.weight_db}
+                        fade_ms={cue.fade_ms}
+                        audio_base64={cue.audioBase64}
+                        handleUpdate={handleUpdate}
+                      />
+                    </motion.div>
+                  ))}
               </div>
 
               {/* Master Mix Button */}
@@ -216,7 +320,8 @@ const Index = () => {
                 transition={{ delay: 0.5 }}
               >
                 <MasterMixButton 
-                  onMix={handleMasterMix}
+                  isLoading={isLoading}
+                  onMix={(storyText) => handleMasterMix(storyText)}
                   disabled={audioCues.length === 0}
                 />
               </motion.div>
@@ -224,19 +329,31 @@ const Index = () => {
           )}
         </AnimatePresence>
 
-        {/* Evaluation Section */}
+
+        Final Audio & Evaluation
         <AnimatePresence>
-          {showEvaluation && (
+          {finalAudio && finalAudio.audioBase64 && (
             <motion.section
-              className="container mx-auto px-4 pb-12"
+              className="container mx-auto px-4 pb-12 space-y-6"
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
             >
-              <EvaluationGrid />
+              <FinalAudioPlayer 
+                audioBase64={finalAudio.audioBase64}
+                duration={finalAudio.duration}
+              />
+              <EvaluationForm 
+                audioBase64={finalAudio.audioBase64}
+                storyText={storyText}
+                driveFolderLink={GOOGLE_DRIVE_FOLDER_LINK}
+                sheetLink={GOOGLE_SHEETS_LINK}
+              />
             </motion.section>
           )}
         </AnimatePresence>
+
+       
 
         {/* Footer */}
         <footer className="border-t border-border/30 py-8 mt-12">

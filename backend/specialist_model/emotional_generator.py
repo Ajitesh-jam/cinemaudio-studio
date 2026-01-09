@@ -1,8 +1,9 @@
-from headers.imports import *
+import logging
 from Variable.configurations import STEPS,EMOTIONAL_RATE,EMOTIONAL_GAIN
 import numpy as np
 from tangoflux import TangoFluxInference 
-
+from IPython.display import Audio
+from pydub import AudioSegment
 logger = logging.getLogger(__name__)
 
 logger.info("Loading model...")

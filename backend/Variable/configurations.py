@@ -27,7 +27,10 @@ MODIFIER_WORDS = {
 
 
 # Specialist model configuartions
-STEPS=50
+# Note: STEPS=48 to avoid IndexError in scheduler 
+# The scheduler creates (steps+1) sigmas, so with STEPS=48, we get 49 sigmas (indices 0-48)
+# When step_index=48, it accesses step_index+1=49 which is valid
+STEPS=48
 
 
 SFX_RATE=44100

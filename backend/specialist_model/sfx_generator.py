@@ -1,9 +1,9 @@
-from headers.imports import *
-from Variable.configurations import STEPS,SFX_RATE,SFX_GAIN
 import numpy as np
 from tangoflux import TangoFluxInference
 from IPython.display import Audio
-
+from pydub import AudioSegment
+import logging
+from Variable.configurations import STEPS,SFX_RATE,SFX_GAIN
 logger = logging.getLogger(__name__)
 
 logger.info("Loading model...")

@@ -9,13 +9,9 @@ Provides API endpoints for:
 import os
 import sys
 import logging
-import base64
-import io
-from typing import List, Optional, Dict
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -23,8 +19,6 @@ import uvicorn
 project_root = os.path.abspath(os.path.dirname(__file__))
 if project_root not in sys.path:
     sys.path.append(project_root)
-
-from pydub import AudioSegment
 
 # Import project-specific modules
 from Variable.dataclases import (
@@ -37,10 +31,13 @@ from Variable.dataclases import (
     GenerateFromStoryRequest,GenerateFromStoryResponse,
     GenerateAudioCuesWithAudioBase64Request,GenerateAudioCuesWithAudioBase64Response
 )
+
 from Variable.configurations import READING_SPEED_WPS
 from Tools.decide_audio import decide_audio_cues
-from Tools.play_audio import create_audio_from_audiocue
 from superimposition_model.superimposition_model import superimpose_audio_cues, superimpose_audio_cues_with_audio_base64,superimposition_model
+from helper.audio_conversions import audio_to_base64
+from helper.parallel_audio_generation import parallel_audio_generation
+
 
 # Configure logging to explicitly output to stdout/stderr
 logging.basicConfig(
@@ -52,13 +49,12 @@ logging.basicConfig(
     force=True  # Override any existing configuration
 )
 logger = logging.getLogger(__name__)
-# Ensure logger outputs to stdout
 logger.setLevel(logging.INFO)
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Audio Generation API",
-    description="API for generating audio cues and final audio from story text",
+    description="Background Mellow APIs for a cinematic storytelling experience",
     version="1.0.0"
 )
 
@@ -70,29 +66,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# Helper function to convert AudioCue to dict
-def audio_cue_to_dict(cue: AudioCue) -> dict:
-    """Convert AudioCue to dictionary"""
-    return {
-        "audio_class": cue.audio_class,
-        "audio_type": cue.audio_type,
-        "start_time_ms": cue.start_time_ms,
-        "duration_ms": cue.duration_ms,
-        "weight_db": cue.weight_db,
-        "fade_ms": cue.fade_ms
-    }
-
-# Helper function to convert AudioSegment to base64
-def audio_to_base64(audio: AudioSegment, format: str = "wav") -> str:
-    """Convert AudioSegment to base64 encoded string"""
-    buffer = io.BytesIO()
-    audio.export(buffer, format=format)
-    buffer.seek(0)
-    audio_bytes = buffer.read()
-    audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-    return audio_base64
 
 # API Endpoints
 @app.get("/")
@@ -155,28 +128,8 @@ async def generate_audio_from_cues_handler(request: GenerateAudioFromCuesRequest
     """
     try:
         logger.info(f"Generating audio from {len(request.cues)} cues")
-        cues = [
-            AudioCue(
-                id=cue.id,
-                audio_class=cue.audio_class,
-                audio_type=cue.audio_type,
-                start_time_ms=cue.start_time_ms,
-                duration_ms=cue.duration_ms,
-                weight_db=cue.weight_db,
-                fade_ms=cue.fade_ms
-            )
-            for cue in request.cues
-        ]
-        audio_cues = []
-        for cue in cues:
-            audio_cues.append(
-                AudioCueWithAudioBase64(
-                    audio_cue=cue,
-                    audio_base64=audio_to_base64(create_audio_from_audiocue(cue)),
-                    duration_ms=cue.duration_ms
-                )
-            )
         
+        audio_cues = parallel_audio_generation(request.cues)
         return GenerateAudioFromCuesResponse(
             audio_cues=audio_cues,
             message="Successfully generated audio"
@@ -192,28 +145,41 @@ async def generate_audio_from_cues_handler(request: GenerateAudioFromCuesRequest
 @app.post("/api/v1/generate-audio-cues-with-audio-base64", response_model=GenerateAudioCuesWithAudioBase64Response)
 async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAudioBase64Request):
     """
-    Generate audio cues with audio base64 from story text.
+    Generate audio cues with audio base64 from input cues and story text.
     """
     try:
         logger.info(f"Generating audio cues with audio base64 from story: {request.story_text[:50]}...")
-        audio_cues = [
-            AudioCueWithAudioBase64(
-                audio_cue=AudioCue(
-                    id=cue.id,
-                    audio_class=cue.audio_class,
-                    audio_type=cue.audio_type,
-                    start_time_ms=cue.start_time_ms,
-                    duration_ms=cue.duration_ms,
-                    weight_db=cue.weight_db,
-                    fade_ms=cue.fade_ms
-                ),
-                audio_base64=cue.audio_base64,
-                duration_ms=cue.duration_ms
+        audio_cues = []
+        for cue in request.cues:
+            # If already AudioCueWithAudioBase64, but fields may be pydantic models, convert to dataclasses:
+            audio_cue = cue.audio_cue
+            # If audio_cue is not a dataclass instance, convert
+            if not hasattr(audio_cue, "__dataclass_fields__"):
+                audio_cue = AudioCue(
+                    id=audio_cue.id,
+                    audio_class=audio_cue.audio_class,
+                    audio_type=audio_cue.audio_type,
+                    start_time_ms=audio_cue.start_time_ms,
+                    duration_ms=audio_cue.duration_ms,
+                    weight_db=audio_cue.weight_db,
+                    fade_ms=audio_cue.fade_ms,
+                )
+            audio_cues.append(
+                AudioCueWithAudioBase64(
+                    audio_cue=audio_cue,
+                    audio_base64=cue.audio_base64,
+                    duration_ms=cue.duration_ms
+                )
             )
-            for cue in request.cues
-        ]
-        final_audio = superimpose_audio_cues_with_audio_base64(audio_cues, request.total_duration_ms)
-        return GenerateAudioCuesWithAudioBase64Response(audio_base64=audio_to_base64(final_audio),message="Successfully generated audio cues with audio base64")
+        total_duration_ms = max(
+            (c.audio_cue.start_time_ms + c.audio_cue.duration_ms) for c in audio_cues
+        )
+
+        final_audio = superimpose_audio_cues_with_audio_base64(audio_cues, total_duration_ms)
+        return GenerateAudioCuesWithAudioBase64Response(
+            audio_base64=audio_to_base64(final_audio),
+            message="Successfully generated audio cues with audio base64",
+        )
     except Exception as e:
         logger.error(f"Error generating audio cues with audio base64: {e}", exc_info=True)
         raise HTTPException(
@@ -236,7 +202,7 @@ async def generate_from_story(request: GenerateFromStoryRequest):
         speed_wps = request.speed_wps if request.speed_wps is not None else READING_SPEED_WPS
         
         final_audio = superimposition_model(request.story_text, speed_wps)
-        return GenerateFromStoryResponse(audio_base64=audio_to_base64(final_audio),message="Successfully generated audio from story")
+        return GenerateFromStoryResponse(audio_base64=audio_to_base64(final_audio))
     except Exception as e:
         logger.error(f"Error generating audio from story: {e}", exc_info=True)
         raise HTTPException(

@@ -10,42 +10,58 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 print("Project root added to sys.path:", project_root)
 
-from headers.imports import *
+import logging
+import json
+import re
+import warnings
 from Variable.dataclases import AudioCue
 from Variable.configurations import MODIFIER_WORDS, DEFAULT_WEIGHT_DB, DEFAULT_SFX_DURATION_MS
-
-import json
 import math
-import re
-import requests
-import os
 from typing import List, Dict, Tuple
-from dataclasses import asdict
-
-# Try to import Gemini API
+from dotenv import load_dotenv
+import spacy
 try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
+    nlp = spacy.load("en_core_web_sm")
+    nlp_available = True
+except Exception:
+    nlp = None
+    nlp_available = False
 
+# Load environment variables from .env file
+# Try to load from backend directory first, then project root
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(backend_dir, ".."))
+load_dotenv(os.path.join(backend_dir, ".env"))  # Try backend/.env
+load_dotenv(os.path.join(project_root, ".env"))  # Try project root .env
+load_dotenv()  # Also try default locations
 
+# Initialize logger first
 logger = logging.getLogger(__name__)
 
-# Try importing spaCy, fall back to a simple approach if not available
+# Try to import Gemini API - prefer new google.genai, fallback to deprecated google.generativeai
+GEMINI_AVAILABLE = False
+USE_NEW_GENAI = False
+genai = None
+
+# Try new google.genai package first
 try:
-    import spacy
-    nlp_available = True
-    try:
-        nlp = spacy.load("en_core_web_sm")
-    except OSError:
-        logger.warning("spaCy model 'en_core_web_sm' not found. Install with: python -m spacy download en_core_web_sm")
-        logger.warning("Falling back to simple NLP extraction...")
-        nlp_available = False
+    import google.genai as genai  # type: ignore
+    GEMINI_AVAILABLE = True
+    USE_NEW_GENAI = True
+    logger.info("Using new google.genai package")
 except ImportError:
-    logger.warning("spaCy not installed. Install with: pip install spacy")
-    logger.warning("Falling back to simple NLP extraction...")
-    nlp_available = False
+    # Fallback to deprecated google.generativeai
+    try:
+        # Suppress the deprecation warning for now
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning, message=".*google.generativeai.*")
+            import google.generativeai as genai
+        GEMINI_AVAILABLE = True
+        USE_NEW_GENAI = False
+        logger.warning("Using deprecated google.generativeai package. Consider upgrading to google.genai")
+    except ImportError:
+        GEMINI_AVAILABLE = False
+        logger.warning("Gemini API packages not available. Install google-genai or google-generativeai")
 
 
 def _classify_audio_type(word: str, pos_tag: str, context: str = "") -> Tuple[str | None, str | None]:
@@ -58,6 +74,7 @@ def _classify_audio_type(word: str, pos_tag: str, context: str = "") -> Tuple[st
     # Sound-producing verbs -> SFX
     sound_verbs = {
         'bark', 'barking', 'barked', 'barked',
+        'cat','cat purring', 'cat hissing', 'cat meowing', 'cat purring', 'cat hissing',
         'run', 'running', 'ran', 'runs',
         'scream', 'screaming', 'screamed', 'screams',
         'shout', 'shouting', 'shouted', 'shouts',
@@ -177,6 +194,9 @@ def _extract_audio_cues_nlp(story_text: str, speed_wps: float):
     """
     Uses spaCy NLP to extract audio cues from text.
     """
+    if not nlp_available or nlp is None:
+        # Fallback to simple extraction if NLP is not available
+        return _extract_audio_cues_simple(story_text, speed_wps)
     doc = nlp(story_text)
     words = story_text.lower().split()
     total_words = len(words)
@@ -321,8 +341,6 @@ def _extract_audio_cues_simple(story_text: str, speed_wps: float):
     
     return cues_to_play, total_duration_ms
 
-
-
 def analyze_story_with_gemini(story_text: str, speed_wps: float):
     """
     Use Gemini API to analyze story and extract audio cues.
@@ -333,17 +351,12 @@ def analyze_story_with_gemini(story_text: str, speed_wps: float):
         return None
     
     # Get API key from environment variable
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         logger.warning("GEMINI_API_KEY not found in environment variables. Set it with: export GEMINI_API_KEY='your-key'")
         return None
     
     try:
-        genai.configure(api_key=api_key)
-        
-        # Use 1.5 Flash for speed and high free-tier limits
-        model = genai.GenerativeModel('gemini-3-flash-preview')
-        
         words = story_text.split()
         total_words = len(words)
         
@@ -357,6 +370,8 @@ For each sound, provide:
 - word_index: position in story (0 to {total_words-1})
 - weight_db: volume adjustment (-10.0 to 5.0, use 6.0 for "loud")
 
+Try keeping as less as possible Audio Cues.
+
 Return ONLY a JSON array:
 [
   {{"audio_class": "detailed sound description", "audio_type": "SFX|AMBIENCE|MUSIC", "word_index": 0, "weight_db": 0.0}}
@@ -364,10 +379,32 @@ Return ONLY a JSON array:
 
 JSON:"""
         
-        response = model.generate_content(prompt)
+        # Handle both new and old API
+        if USE_NEW_GENAI:
+            # New google.genai API
+            try:
+                client = genai.Client(api_key=api_key)  # type: ignore
+                response = client.models.generate_content(  # type: ignore
+                    model='gemini-2.5-flash',
+                    contents=prompt
+                )
+                response_text = response.text
+            except AttributeError:
+                # If new API structure is different, fallback to old API pattern
+                logger.warning("New API structure not recognized, trying alternative...")
+                genai.configure(api_key=api_key)  # type: ignore
+                model = genai.GenerativeModel('gemini-2.5-flash')  # type: ignore
+                response = model.generate_content(prompt)  # type: ignore
+                response_text = response.text
+        else:
+            # Old google.generativeai API
+            genai.configure(api_key=api_key)  # type: ignore
+            model = genai.GenerativeModel('gemini-2.5-flash')  # type: ignore
+            response = model.generate_content(prompt)  # type: ignore
+            response_text = response.text
         
         # Clean up the markdown response to get pure JSON
-        json_text = response.text.replace('```json', '').replace('```', '').strip()
+        json_text = response_text.replace('```json', '').replace('```', '').strip()
         
         # Extract JSON if it's embedded in text
         json_match = re.search(r'\[[\s\S]*?\]', json_text)
@@ -380,209 +417,7 @@ JSON:"""
         logger.error(f"Gemini API error: {e}")
         return None
 
-
-
-# def query_llm(system_prompt: str):
-#     """
-#     Query LLM using transformers library locally.
-#     Uses a small, fast model that runs on CPU.
-#     """
-#     try:
-#         from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
-#     except ImportError:
-#         logger.error("transformers library not installed. Install with: pip install transformers torch")
-#         return None
-    
-#     # Use GPT-2 with few-shot prompting for better results
-#     model_name = "gpt2"  # Small, reliable
-    
-#     try:
-#         logger.info(f"Loading model {model_name}...")
-        
-#         # Use text-generation for GPT-2
-#         generator = pipeline(
-#             "text-generation",
-#             model=model_name,
-#             tokenizer=model_name,
-#             device=-1,  # Use CPU
-#             do_sample=True,
-#             temperature=0.1,  # Very low for more deterministic output
-#             top_p=0.95,
-#             repetition_penalty=1.3,
-#             return_full_text=False
-#         )
-        
-#         logger.info("Generating response...")
-#         results = generator(system_prompt, max_new_tokens=200, num_return_sequences=1, truncation=True)
-        
-#         # Extract generated text (T5 returns different format)
-#         generated_text = None
-#         if isinstance(results, list) and len(results) > 0:
-#             result_item = results[0]
-#             if isinstance(result_item, dict):
-#                 # T5 models return {'generated_text': '...'}
-#                 generated_text = result_item.get('generated_text', '')
-#             else:
-#                 generated_text = str(result_item)
-#         elif isinstance(results, dict):
-#             generated_text = results.get('generated_text', '')
-#         elif isinstance(results, str):
-#             generated_text = results
-#         else:
-#             generated_text = str(results)
-        
-#         # Remove the original prompt from the generated text if it's included
-#         if generated_text and system_prompt in generated_text:
-#             generated_text = generated_text.replace(system_prompt, "").strip()
-        
-#         if generated_text and len(generated_text.strip()) > 0:
-#             logger.info(f"Successfully generated response (length: {len(generated_text)})")
-#             return generated_text.strip()
-#         else:
-#             logger.warning(f"Empty response from model. Results type: {type(results)}, value: {results}")
-#             return None
-            
-#     except Exception as e:
-#         logger.error(f"Error generating with transformers: {e}")
-#         print(f"--- DEBUG ERROR: {str(e)} ---")
-#         return None
-    
-# def decide_audio_llm(story_text: str, speed_wps: float):
-#     print(f"[LLM-DECIDER] Analyzing story with LLM...")
-    
-#     words = story_text.split()
-#     total_duration_ms = math.ceil((len(words) / speed_wps) * 1000)
-
-#     # Use LLM to describe sounds, then extract from description
-#     system_prompt = f"""Describe the sounds in this story: "{story_text}" Sounds:"""
-
-#     raw_output = query_llm(system_prompt)
-#     logger.info(f"LLM output: {raw_output}")
-    
-#     if not raw_output:
-#         print("[ERROR] LLM returned no data.")
-#         return [], total_duration_ms
-
-#     try:
-#         # Convert to string if needed
-#         if not isinstance(raw_output, str):
-#             raw_output = str(raw_output)
-        
-#         # Extract audio cues from LLM description using keyword matching
-#         raw_cues = []
-#         story_lower = story_text.lower()
-#         words_list = story_text.split()
-#         output_lower = raw_output.lower()
-        
-#         # Comprehensive keyword mapping
-#         sound_keywords = {
-#             'rain': ('rain falling', 'AMBIENCE', ['rain', 'raining', 'rainy', 'raindrop']),
-#             'dog': ('dog barking', 'SFX', ['dog', 'barking', 'bark', 'barked']),
-#             'run': ('footsteps running', 'SFX', ['run', 'ran', 'running', 'runs']),
-#             'shelter': ('shelter ambience', 'AMBIENCE', ['shelter', 'roof', 'indoors']),
-#             'loud': ('loud sound', 'SFX', ['loud', 'loudly']),
-#             'suddenly': ('dramatic stinger', 'MUSIC', ['suddenly', 'sudden', 'abrupt']),
-#             'started': ('sound starting', 'SFX', ['started', 'start', 'began']),
-#             'heard': ('sound heard', 'SFX', ['heard', 'hear', 'hearing']),
-#         }
-        
-#         # Find all keywords in story
-#         found_sounds = {}
-#         for key, (audio_class, audio_type, keywords) in sound_keywords.items():
-#             for i, word in enumerate(words_list):
-#                 word_lower = word.lower().strip('.,!?;:')
-#                 if any(kw in word_lower for kw in keywords):
-#                     if key not in found_sounds or i < found_sounds[key]['word_index']:
-#                         found_sounds[key] = {
-#                             'audio_class': audio_class,
-#                             'audio_type': audio_type,
-#                             'word_index': i,
-#                             'keywords': keywords
-#                         }
-        
-#         # Check if LLM mentioned these sounds and create cues
-#         for key, sound_info in found_sounds.items():
-#             # Check if LLM output mentions this sound (more lenient matching)
-#             llm_mentions = any(kw in output_lower for kw in sound_info['keywords'])
-#             # Also check if LLM mentions related words
-#             if not llm_mentions:
-#                 related_words = {
-#                     'rain': ['water', 'wet', 'storm', 'weather'],
-#                     'dog': ['animal', 'pet', 'canine', 'woof'],
-#                     'run': ['footstep', 'step', 'walk', 'move'],
-#                     'shelter': ['cover', 'protection', 'inside', 'building'],
-#                 }
-#                 if key in related_words:
-#                     llm_mentions = any(rw in output_lower for rw in related_words[key])
-            
-#             if llm_mentions or len(found_sounds) <= 3:  # Include if LLM mentioned it, or if few sounds found
-#                 # Determine weight
-#                 weight_db = 0.0
-#                 if 'loud' in story_lower and sound_info['word_index'] < len(words_list):
-#                     # Check if "loud" is near this word
-#                     for j in range(max(0, sound_info['word_index'] - 2), min(len(words_list), sound_info['word_index'] + 3)):
-#                         if 'loud' in words_list[j].lower():
-#                             weight_db = 6.0
-#                             break
-                
-#                 raw_cues.append({
-#                     "audio_class": sound_info['audio_class'],
-#                     "audio_type": sound_info['audio_type'],
-#                     "word_index": sound_info['word_index'],
-#                     "weight_db": weight_db
-#                 })
-        
-#         if not raw_cues:
-#             print(f"[ERROR] No valid cues extracted from LLM description. LLM said: {raw_output[:200]}...")
-#             return [], total_duration_ms
-        
-#         logger.info(f"Extracted {len(raw_cues)} cues from LLM description")
-#         cues_to_play: List[AudioCue] = []
-#         last_cue_index = {"AMBIENCE": -1, "MUSIC": -1}
-
-#         for item in raw_cues:
-#             # Type snapping to prevent hallucination
-#             a_type = str(item.get("audio_type", "SFX")).upper()
-#             if a_type not in ["SFX", "AMBIENCE", "MUSIC"]:
-#                 a_type = "SFX"
-
-#             start_ms = math.ceil((item.get("word_index", 0) / speed_wps) * 1000)
-            
-#             cue = AudioCue(
-#                 id=i,
-#                 audio_class=item.get("audio_class", "background texture"),
-#                 start_time_ms=start_ms,
-#                 duration_ms=DEFAULT_SFX_DURATION_MS,
-#                 weight_db=item.get("weight_db", DEFAULT_WEIGHT_DB),
-#                 audio_type=a_type
-#             )
-
-#             # Logic for continuous sounds (Ambience/Music)
-#             if a_type in last_cue_index:
-#                 idx = last_cue_index[a_type]
-#                 if idx != -1:
-#                     cues_to_play[idx].duration_ms = start_ms - cues_to_play[idx].start_time_ms
-                
-#                 cue.duration_ms = max(0, total_duration_ms - start_ms)
-#                 last_cue_index[a_type] = len(cues_to_play)
-
-#             cues_to_play.append(cue)
-
-#         print(f"[LLM-DECIDER] Generated {len(cues_to_play)} cues successfully.")
-#         return cues_to_play, total_duration_ms
-
-#     except Exception as e:
-#         print(f"[ERROR] Parsing failed: {e}")
-#         return [], total_duration_ms
-    
-    
-    
-# These imports are already at the top of the file, removing duplicates
-
-logger = logging.getLogger(__name__)
-
 # --- 1. LOCAL HUGGING FACE MODEL (GLiNER) ---
-# This model finds the exact "source" words in your story text.
 try:
     from gliner import GLiNER
     gliner_model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
@@ -610,41 +445,18 @@ def extract_local_entities(text: str):
         return []
 
 # --- 2. GEMINI CLOUD MODEL ---
-# This model performs the "Cinematic Reasoning."
 def query_gemini(story_text: str, speed_wps: float):
     if not GEMINI_AVAILABLE:
         logger.warning("Gemini API not available")
         return None
     
+    # Get API key from environment variable
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         logger.warning("GEMINI_API_KEY not found in environment variables. Set it with: export GEMINI_API_KEY='your-key'")
         return None
     
     try:
-        genai.configure(api_key=api_key)
-        
-        # Try different model names in order
-        # Note: Model names should NOT include 'models/' prefix when using GenerativeModel
-        model_names = [
-            'gemini-3-flash-preview',         # Standard name
-    
-        ]
-        
-        model = None
-        for model_name in model_names:
-            try:
-                model = genai.GenerativeModel(model_name)
-                logger.info(f"Using Gemini model: {model_name}")
-                break
-            except Exception as e:
-                logger.debug(f"Model {model_name} failed: {e}")
-                continue
-        
-        if not model:
-            logger.error("No available Gemini model found")
-            return None
-        
         prompt = f"""
         Act as a Master Sound Designer for a movie. Analyze the story and create a JSON list of audio cues.
         
@@ -660,9 +472,69 @@ def query_gemini(story_text: str, speed_wps: float):
         Return ONLY a raw JSON array. No conversational text.
         """
         
-        response = model.generate_content(prompt)
+        # Handle both new and old API
+        if USE_NEW_GENAI:
+            # New google.genai API - try different models
+            model_names = ['gemini-2.5-flash', 'gemini-1.5-pro']
+            response_text = None
+            
+            try:
+                client = genai.Client(api_key=api_key)  # type: ignore
+                for model_name in model_names:
+                    try:
+                        response = client.models.generate_content(  # type: ignore
+                            model=model_name,
+                            contents=prompt
+                        )
+                        response_text = response.text
+                        logger.info(f"Using Gemini model: {model_name}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Model {model_name} failed: {e}")
+                        continue
+            except AttributeError:
+                # If new API structure is different, fallback to old API pattern
+                logger.warning("New API structure not recognized, trying old API pattern...")
+                genai.configure(api_key=api_key)  # type: ignore
+                model_names = ['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+                for model_name in model_names:
+                    try:
+                        model = genai.GenerativeModel(model_name)  # type: ignore
+                        response = model.generate_content(prompt)  # type: ignore
+                        response_text = response.text
+                        logger.info(f"Using Gemini model: {model_name}")
+                        break
+                    except Exception as e:
+                        logger.debug(f"Model {model_name} failed: {e}")
+                        continue
+            
+            if not response_text:
+                logger.error("No available Gemini model found")
+                return None
+        else:
+            # Old google.generativeai API
+            genai.configure(api_key=api_key)  # type: ignore
+            model_names = ['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+            model = None
+            
+            for model_name in model_names:
+                try:
+                    model = genai.GenerativeModel(model_name)  # type: ignore
+                    logger.info(f"Using Gemini model: {model_name}")
+                    break
+                except Exception as e:
+                    logger.debug(f"Model {model_name} failed: {e}")
+                    continue
+            
+            if not model:
+                logger.error("No available Gemini model found")
+                return None
+            
+            response = model.generate_content(prompt)  # type: ignore
+            response_text = response.text
+        
         # Clean potential markdown backticks
-        json_str = response.text.replace("```json", "").replace("```", "").strip()
+        json_str = response_text.replace("```json", "").replace("```", "").strip()
         
         # Extract JSON if embedded in text
         json_match = re.search(r'\[[\s\S]*?\]', json_str)
@@ -674,7 +546,6 @@ def query_gemini(story_text: str, speed_wps: float):
         logger.error(f"Gemini Error: {e}")
         return None
 
-# --- 3. THE INTEGRATED DECIDER ---
 def decide_audio_llm(story_text: str, speed_wps: float):
     print(f"[DECIDER] Starting Hybrid AI Analysis...")
     
@@ -692,11 +563,9 @@ def decide_audio_llm(story_text: str, speed_wps: float):
         try:
             # Try to use query_llm if available (defined earlier in file)
             system_prompt = f"""Describe the sounds in this story: "{story_text}"
-
 Sounds:"""
-            # Import or call query_llm - it should be defined above
-            from Tools.decide_audio import query_llm
-            raw_output = query_llm(system_prompt)
+            # query_llm is not available in this file, skip LLM fallback
+            raw_output = None
         except (NameError, ImportError):
             # If query_llm not available, skip LLM and use direct keyword matching
             raw_output = None
@@ -828,9 +697,9 @@ def decide_audio_cues(story_text: str, speed_wps: float):
     logger.info(f"Finished parsing. Found {len(cues)} audio cues.")
     return cues, total_duration
 
-# if __name__ == "__main__":
-#     story_text = "Suddenly rain started so i ran to shelter where i heard loud dog barking"
-#     speed_wps = 100
-#     cues, total_duration = decide_audio(story_text, speed_wps)
-#     print(cues)
-#     print(total_duration)
+if __name__ == "__main__":
+    story_text = "Suddenly rain started so i ran to shelter where i heard loud dog barking"
+    speed_wps = 100
+    cues, total_duration = decide_audio_cues(story_text, speed_wps)
+    print(cues)
+    print(total_duration)

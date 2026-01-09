@@ -47,9 +47,9 @@ class GenerateFromStoryResponse(BaseModel):
     audio_base64: str = Field(..., description="Base64 encoded WAV audio data") 
     
 class GenerateAudioCuesWithAudioBase64Request(BaseModel):
+    cues: List[AudioCueWithAudioBase64]
     story_text: str = Field(..., description="The story text to process")
     speed_wps: Optional[float] = Field(READING_SPEED_WPS, description="Words per second reading speed")
-    cues: List[AudioCueWithAudioBase64]
 
 class GenerateAudioCuesWithAudioBase64Response(BaseModel):
     audio_base64: str = Field(..., description="Base64 encoded WAV audio data")

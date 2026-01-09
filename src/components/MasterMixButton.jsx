@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 import { Music2, Loader2 } from "lucide-react";
 
-const MasterMixButton = ({ onMix, disabled = false }) => {
+const MasterMixButton = ({  isLoading, onMix, disabled = false }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
 
@@ -11,19 +11,15 @@ const MasterMixButton = ({ onMix, disabled = false }) => {
     
     setIsGenerating(true);
     setProgress(0);
-    
-    // Simulate generation with progress
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsGenerating(false);
-          onMix?.();
-          return 100;
-        }
-        return prev + Math.random() * 15;
-      });
-    }, 500);
+    const result = await onMix?.();
+    if (result) {
+      setIsGenerating(false);
+      setProgress(100);
+    } else {
+      setIsGenerating(false);
+      setProgress(0);
+    }
+
   };
 
   return (

@@ -1,20 +1,19 @@
-import sys
-import os
+# import sys
+# import os
 
-# Get absolute path of project root (one level up from current notebook)
-project_root = os.path.abspath("..")
+# # Get absolute path of project root (one level up from current notebook)
+# project_root = os.path.abspath("..")
 
-# Add to sys.path if not already
-if project_root not in sys.path:
-    sys.path.append(project_root)
+# # Add to sys.path if not already
+# if project_root not in sys.path:
+#     sys.path.append(project_root)
 
-from headers.imports import *
+import logging
 from Variable.configurations import STEPS,ENV_RATE,ENV_GAIN
 import numpy as np
-# import os
-# import sys
-# import importlib
 from tangoflux import TangoFluxInference
+from pydub import AudioSegment
+from IPython.display import Audio
 
 logger = logging.getLogger(__name__)
 
