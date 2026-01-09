@@ -370,7 +370,7 @@ For each sound, provide:
 - word_index: position in story (0 to {total_words-1})
 - weight_db: volume adjustment (-10.0 to 5.0, use 6.0 for "loud")
 
-Try keeping as less as possible Audio Cues.
+Try keeping as less as possible Audio Cues not more that 3-4 Audio Cues.
 
 Return ONLY a JSON array:
 [

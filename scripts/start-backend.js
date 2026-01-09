@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 const backendDir = path.join(__dirname, "..", "backend");
 
 // Set environment variables
-process.env.PORT = process.env.PORT || "8000";
+process.env.PORT = process.env.PORT || "8001";
 process.env.HOST = process.env.HOST || "0.0.0.0";
 process.env.PYTHONUNBUFFERED = "1"; // Ensure Python output is unbuffered
 

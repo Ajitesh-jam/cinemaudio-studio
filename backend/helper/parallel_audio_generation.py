@@ -1,72 +1,72 @@
 from typing import List
-from Variable.dataclases import AudioCue
-from Variable.dataclases import AudioCueWithAudioBase64
-from helper.audio_conversions import audio_to_base64
-from Tools.play_audio import create_audio_from_audiocue
 import concurrent.futures
 import logging
-import threading
+import multiprocessing
+from Variable.dataclases import AudioCue, AudioCueWithAudioBase64
+from helper.audio_conversions import audio_to_base64
+from Tools.play_audio import create_audio_from_audiocue
 
 logger = logging.getLogger(__name__)
 
-# Lock to serialize model access (TangoFlux models are not thread-safe)
-_model_lock = threading.Lock()
-
-def process_cue(cue):
+def process_cue(cue: AudioCue):
     """
-    Process a single audio cue and generate audio.
-    Uses a lock to serialize model access since TangoFlux models are not thread-safe.
+    Processes a single cue in a separate process.
+    Each process has its own memory space and model instance, enabling true parallelism.
     """
-    # Serialize access to models to avoid "Already borrowed" errors
-    with _model_lock:
-        try:
-            return AudioCueWithAudioBase64(
-                audio_cue=cue,
-                audio_base64=audio_to_base64(create_audio_from_audiocue(cue)),
-                duration_ms=cue.duration_ms
-            )
-        except IndexError as e:
-            # Handle scheduler IndexError (step_index out of bounds)
-            if "out of bounds" in str(e) and ("step_index" in str(e) or "dimension" in str(e)):
-                logger.warning(f"IndexError in scheduler for cue {cue.id}, this may be a tangoflux scheduler bug. Error: {e}")
-                # Re-raise to let the caller handle it
-                raise
-            else:
-                # Re-raise other IndexErrors
-                raise
-        except Exception as e:
-            logger.error(f"Error processing cue {cue.id}: {e}")
-            raise
+    try:
+        # Generate audio (each process has its own model instance)
+        audio_data = create_audio_from_audiocue(cue)
+        
+        # Convert to base64
+        base64_data = audio_to_base64(audio_data)
+        
+        return AudioCueWithAudioBase64(
+            audio_cue=cue,
+            audio_base64=base64_data,
+            duration_ms=cue.duration_ms
+        )
+    except Exception as e:
+        logger.error(f"Failed to process cue {getattr(cue, 'id', 'unknown')}: {e}")
+        raise  # Re-raise to be caught by the executor loop
 
 def parallel_audio_generation(cues: List[AudioCue]):
     """
-    Generates audio for each cue in parallel and returns a list of AudioCueWithAudioBase64.
-    Handles errors gracefully and continues processing other cues.
+    Generate audio for multiple cues in parallel using ProcessPoolExecutor.
+    Each process runs independently with its own model instance, enabling true parallelism.
     """
+    if not cues:
+        return []
+    
     results = []
-    errors = []
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Map each cue to a future
-        futures = {executor.submit(process_cue, cue): cue for cue in cues}
-        for future in concurrent.futures.as_completed(futures):
-            cue = futures[future]
-            try:
-                result = future.result()
-                results.append(result)
-                logger.info(f"Processed cue {result.audio_cue.id}")
-            except IndexError as e:
-                error_msg = f"IndexError processing cue {cue.id}: {e}"
-                logger.error(error_msg)
-                errors.append((cue.id, error_msg))
-            except Exception as e:
-                error_msg = f"Error processing cue {cue.id}: {e}"
-                logger.error(error_msg)
-                errors.append((cue.id, error_msg))
     
-    if errors:
-        logger.warning(f"Failed to process {len(errors)} cues: {[cue_id for cue_id, _ in errors]}")
+    # Use ProcessPoolExecutor for true parallelism
+    # Each process has its own memory space and can load its own model instance
+    # Limit workers based on CPU cores and available memory/VRAM
+    max_workers = min(len(cues), multiprocessing.cpu_count(), 4)  # Cap at 4 to avoid memory issues
     
-    logger.info(f"Successfully processed {len(results)} out of {len(cues)} cues")
-    return results
+    logger.info(f"Starting parallel audio generation for {len(cues)} cues with {max_workers} workers")
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_cue = {executor.submit(process_cue, cue): cue for cue in cues}
         
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_cue):
+            cue = future_to_cue[future]
+            try:
+                data = future.result()
+                if data:
+                    results.append(data)
+                    logger.info(f"Successfully generated audio for cue {getattr(cue, 'id', 'N/A')}")
+            except IndexError as e:
+                # Specific handling for the TangoFlux scheduler bug
+                logger.error(f"IndexError (Scheduler Bug) in cue {getattr(cue, 'id', 'N/A')}: {e}")
+            except Exception as e:
+                logger.error(f"General error in cue {getattr(cue, 'id', 'N/A')}: {e}")
+
+    # Sort results by the original cue order to maintain timeline sequence
+    results.sort(key=lambda x: x.audio_cue.start_time_ms)
+    
+    logger.info(f"Completed parallel audio generation: {len(results)}/{len(cues)} cues generated successfully")
+    
+    return results

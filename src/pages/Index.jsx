@@ -8,11 +8,6 @@ import AnimatedLoader from "../components/ui/AnimatedLoader";
 import FinalAudioPlayer from "../components/FinalAudioPlayer";
 import EvaluationForm from "../components/EvaluationForm.jsx";
 
-// Google Drive and Sheets configuration
-// TODO: Replace these with your actual Google Drive folder and Google Sheets links
-const GOOGLE_DRIVE_FOLDER_LINK = import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_LINK || "https://drive.google.com/drive/folders/12dhku5E1uZrFME68fRJd2rnEl_Le3y8P?usp=sharing";
-const GOOGLE_SHEETS_LINK = import.meta.env.VITE_GOOGLE_SHEETS_LINK || "https://docs.google.com/spreadsheets/d/1EgWl5yfGMz0aOja6BAt8JiJnwo7MKCyHKQa3mqQSHWQ/edit?usp=sharing";
-
 const sampleAudioCues = [
   {
     id: 1,
@@ -344,8 +339,6 @@ const Index = () => {
               <EvaluationForm 
                 audioBase64={finalAudio.audioBase64}
                 storyText={storyText}
-                driveFolderLink={GOOGLE_DRIVE_FOLDER_LINK}
-                sheetLink={GOOGLE_SHEETS_LINK}
               />
             </motion.section>
           )}
