@@ -174,7 +174,12 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
             personName,
             humanScores, // { dramatization, syncAccuracy, atmosphericDepth }
             feedback,
-            autoMetrics, // { clapScore, spectralRichness, etc. }
+            autoMetrics:{
+              clapScore: autoMetrics.clapScore,
+              spectralRichness: autoMetrics.spectralRichness,
+              noiseFloor: autoMetrics.noiseFloor,
+              audioOnsets: autoMetrics.audioOnsets,
+            },
             finalScore: calculateFinalScore().toFixed(1),
             storyPrompt: storyText || "N/A",
             audioFile: base64Audio,
