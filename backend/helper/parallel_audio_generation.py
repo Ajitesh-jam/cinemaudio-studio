@@ -42,7 +42,7 @@ def parallel_audio_generation(cues: List[AudioCue]):
     # Use ProcessPoolExecutor for true parallelism
     # Each process has its own memory space and can load its own model instance
     # Limit workers based on CPU cores and available memory/VRAM
-    max_workers = min(len(cues), multiprocessing.cpu_count(), 4)  # Cap at 4 to avoid memory issues
+    max_workers = min(len(cues), multiprocessing.cpu_count(), 2)  # Cap at 4 to avoid memory issues
     
     logger.info(f"Starting parallel audio generation for {len(cues)} cues with {max_workers} workers")
     

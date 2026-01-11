@@ -185,6 +185,8 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
             audioFile: base64Audio,
             timestamp: new Date().toLocaleString(),
           };
+
+          console.log("payload :", payload);
     
           // Send to Google Apps Script which will handle:
           // 1. Uploading audio file to Google Drive folder
