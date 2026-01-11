@@ -5,9 +5,8 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import AnimatedLoader from "./ui/AnimatedLoader";
 
-const HeroSection = ({ onDecompose }) => {
-  const [storyText, setStoryText] = useState("");
-  const [isDecomposing, setIsDecomposing] = useState(false);
+const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText}) => {
+
 
   const handleDecompose = async (e) => {
     e?.preventDefault?.();
@@ -20,11 +19,7 @@ const HeroSection = ({ onDecompose }) => {
     }
     
     console.log("Starting decomposition...");
-    setIsDecomposing(true);
-    // Simulate processing
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    setIsDecomposing(false);
-    onDecompose?.(storyText);
+    await onDecompose?.(storyText);
   };
 
   const handleTextChange = (e) => {
@@ -85,7 +80,7 @@ const HeroSection = ({ onDecompose }) => {
             />
           </div>
 
-          {isDecomposing ? (
+          {isLoading ? (
             <div className="mt-6">
               <AnimatedLoader text="DECOMPOSING NARRATIVE..." />
             </div>

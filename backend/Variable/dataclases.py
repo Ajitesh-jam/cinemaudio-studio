@@ -1,0 +1,67 @@
+from headers.imports import dataclass
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from Variable.configurations import READING_SPEED_WPS
+
+
+@dataclass
+class AudioCue:
+    """Stores all information needed for a single sound event."""
+    id: int
+    audio_class: str      # Prompt to send to the specialist (e.g., "rain", "dog bark")
+    audio_type:str
+    start_time_ms: int     # When the sound should start
+    duration_ms: int       # How long the sound should play
+    weight_db: float       # Volume adjustment in decibels (dB)
+    fade_ms: int = 500     # Default fade in/out time
+
+@dataclass
+class AudioCueWithAudioBase64:
+    audio_cue: AudioCue
+    audio_base64: str
+    duration_ms: int
+
+# Request/Response Models
+class DecideCuesRequest(BaseModel):
+    story_text: str = Field(..., description="The story text to analyze")
+    speed_wps: Optional[float] = Field(READING_SPEED_WPS, description="Words per second reading speed")
+
+class DecideCuesResponse(BaseModel):
+    cues: List[AudioCue]
+    total_duration_ms: int
+    message: str
+
+class GenerateAudioFromCuesRequest(BaseModel):
+    cues: List[AudioCue]
+    total_duration_ms: int
+
+class GenerateAudioFromCuesResponse(BaseModel):
+    audio_cues: List[AudioCueWithAudioBase64]
+    message: str = Field(..., description="Message indicating success or failure")
+
+class GenerateFromStoryRequest(BaseModel):
+    story_text: str = Field(..., description="The story text to process")
+    speed_wps: Optional[float] = Field(READING_SPEED_WPS, description="Words per second reading speed")
+    
+class GenerateFromStoryResponse(BaseModel):
+    audio_base64: str = Field(..., description="Base64 encoded WAV audio data") 
+    
+class GenerateAudioCuesWithAudioBase64Request(BaseModel):
+    cues: List[AudioCueWithAudioBase64]
+    story_text: str = Field(..., description="The story text to process")
+    speed_wps: Optional[float] = Field(READING_SPEED_WPS, description="Words per second reading speed")
+
+class GenerateAudioCuesWithAudioBase64Response(BaseModel):
+    audio_base64: str = Field(..., description="Base64 encoded WAV audio data")
+    message: str = Field(..., description="Message indicating success or failure")
+    
+class EvaluateAudioRequest(BaseModel):
+    audio_base64: str = Field(..., description="Base64 encoded WAV audio data")
+    text: str = Field(..., description="The text to evaluate the audio against")
+    
+class EvaluateAudioResponse(BaseModel):
+    clap_score: float = Field(..., description="The CLAP score of the audio")
+    spectral_richness: float = Field(..., description="The spectral richness of the audio")
+    noise_floor: float = Field(..., description="The noise floor of the audio")
+    audio_onsets: int = Field(..., description="The number of audio onsets in the audio")
+    message: str = Field(..., description="Message indicating success or failure")

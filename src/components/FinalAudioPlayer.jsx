@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useCallback, useMemo } from "react";
+import { memo, useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Play, Pause, Download, Volume2 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -8,6 +8,7 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(80);
+  const [actualDuration, setActualDuration] = useState(duration);
   const audioRef = useRef(null);
   const intervalRef = useRef(null);
 
@@ -15,9 +16,14 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
     Array.from({ length: 60 }, () => Math.random() * 0.7 + 0.3),
   []);
 
+  // Update actualDuration when duration prop changes
+  useEffect(() => {
+    setActualDuration(duration);
+  }, [duration]);
+
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current && audioBase64) {
-      audioRef.current = new Audio(`data:audio/mp3;base64,${audioBase64}`);
+      audioRef.current = new Audio(`data:audio/wav;base64,${audioBase64}`);
       audioRef.current.volume = volume / 100;
       audioRef.current.onended = () => {
         setIsPlaying(false);
@@ -26,6 +32,12 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
       };
       audioRef.current.ontimeupdate = () => {
         setCurrentTime(audioRef.current.currentTime);
+      };
+      // Get actual duration from audio element once loaded
+      audioRef.current.onloadedmetadata = () => {
+        if (audioRef.current && audioRef.current.duration && !isNaN(audioRef.current.duration)) {
+          setActualDuration(audioRef.current.duration);
+        }
       };
     }
 
@@ -41,7 +53,7 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
       if (!isPlaying) {
         intervalRef.current = setInterval(() => {
           setCurrentTime(prev => {
-            if (prev >= duration) {
+            if (prev >= actualDuration) {
               clearInterval(intervalRef.current);
               setIsPlaying(false);
               return 0;
@@ -54,7 +66,7 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
       }
       setIsPlaying(!isPlaying);
     }
-  }, [audioBase64, isPlaying, volume, duration]);
+  }, [audioBase64, isPlaying, volume, actualDuration]);
 
   const handleVolumeChange = useCallback((value) => {
     const newVolume = value[0];
@@ -67,8 +79,8 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
   const handleDownload = useCallback(() => {
     if (audioBase64) {
       const link = document.createElement('a');
-      link.href = `data:audio/mp3;base64,${audioBase64}`;
-      link.download = 'cinemaudio-mix.mp3';
+      link.href = `data:audio/wav;base64,${audioBase64}`;
+      link.download = 'cinemaudio-mix.wav';
       link.click();
     }
   }, [audioBase64]);
@@ -79,7 +91,7 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const progress = (currentTime / duration) * 100;
+  const progress = actualDuration > 0 ? (currentTime / actualDuration) * 100 : 0;
 
   return (
     <motion.div
@@ -147,7 +159,7 @@ const FinalAudioPlayer = memo(({ audioBase64, duration = 30 }) => {
 
         {/* Time */}
         <div className="font-mono text-sm text-muted-foreground">
-          {formatTime(currentTime)} / {formatTime(duration)}
+          {formatTime(currentTime)} / {formatTime(actualDuration)}
         </div>
 
         {/* Volume */}

@@ -5,7 +5,8 @@ import {
   ArrowRight,
   Save,
   CheckCircle2,
-  Star
+  Star,
+  Loader2
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
@@ -18,16 +19,19 @@ import {
   TableHeader,
   TableRow,
 } from "./ui/table";
-import useAudioStore from "../store/useAudioStore";
 
-const automatedMetrics = [
-  { name: "CLAP Score", value: 0.92, target: 0.85, description: "Audio-text alignment" },
-  { name: "Spectral Richness", value: 0.78, target: 0.70, description: "Frequency distribution" },
-  { name: "Dynamic Range", value: 0.85, target: 0.80, description: "Loudness variation" },
-  { name: "Noise Floor", value: -60, target: -50, description: "dB below signal", isLower: true },
-];
 
-const EvaluationForm = memo(({ onSave }) => {
+
+// Mapping for automated metrics: state key -> display metadata
+const automatedMetricsConfig = {
+  clapScore: { name: "CLAP Score", target: 0.25, isLower: false, format: "percent" },
+  spectralRichness: { name: "Spectral Richness", target: 0.70, isLower: false, format: "float" },
+  noiseFloor: { name: "Noise Floor", target: -50, isLower: true, format: "db" },
+  audioOnsets: { name: "Audio Onsets", target: 10, isLower: false, format: "number" },
+};
+
+
+const EvaluationForm = memo(({ audioBase64, storyText }) => {
   const [step, setStep] = useState("form");
   const [personName, setPersonName] = useState("");
   const [humanScores, setHumanScores] = useState({
@@ -35,10 +39,17 @@ const EvaluationForm = memo(({ onSave }) => {
     syncAccuracy: 0,
     atmosphericDepth: 0,
   });
+
+  const [autoMetrics, setAutoMetrics] = useState({
+    clapScore: 0,
+    spectralRichness: 0,
+    noiseFloor: 0,
+    audioOnsets: 0,
+  });
   const [feedback, setFeedback] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  
-  const saveResults = useAudioStore(state => state.saveResults);
+  const [saveStatus, setSaveStatus] = useState(null); // null, 'saving', 'success', 'error'
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
 
   const handleScoreChange = useCallback((key, value) => {
     setHumanScores(prev => ({ ...prev, [key]: value }));
@@ -46,28 +57,191 @@ const EvaluationForm = memo(({ onSave }) => {
 
   const isFormValid = personName.trim() && Object.values(humanScores).every(v => v > 0);
 
-  const handleSubmit = useCallback(() => {
-    setStep("results");
-  }, []);
+  const handleSubmit = useCallback(async () => {
+    if (!audioBase64) {
+      alert("No audio data available for evaluation.");
+      return;
+    }
 
-  const handleSave = useCallback(async () => {
-    setIsSaving(true);
-    const evaluationData = {
-      personName,
-      humanScores,
-      feedback,
-      timestamp: new Date().toISOString()
+    setIsLoadingMetrics(true);
+
+    // Call backend to get automated metrics for audio evaluation
+    let autoMetrics = {
+      clapScore: 0,
+      spectralRichness: 0,
+      noiseFloor: 0,
+      audioOnsets: 0,
+      message: "",
     };
+
+    try {
+      // Extract base64 string (remove data URL prefix if present)
+      const base64Data = audioBase64.includes(',') 
+        ? audioBase64.split(',')[1] 
+        : audioBase64;
+
+      // Call API (use /api/v1/evaluate-audio endpoint)
+      const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
+      const response = await fetch(`${apiBase}/v1/evaluate-audio`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audio_base64: base64Data,
+          text: storyText || "N/A",
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Adapt keys to expected format for saving
+        autoMetrics = {
+          clapScore: data.clap_score || 0,
+          spectralRichness: data.spectral_richness || 0,
+          noiseFloor: data.noise_floor || 0,
+          audioOnsets: data.audio_onsets || 0,
+          message: data.message || "Successfully evaluated audio"
+        };
+        console.log("Successfully fetched automated metrics:", autoMetrics);
+      } else {
+        // Fallback to default values if API fails
+        const errorText = await response.text().catch(() => "Unknown error");
+        autoMetrics = {
+          clapScore: 0,
+          spectralRichness: 0,
+          noiseFloor: 0,
+          audioOnsets: 0,
+          message: `Failed to fetch automated metrics: ${response.status} ${errorText}`
+        };
+        console.error("Failed to get metrics from backend:", response.status, errorText);
+      }
+    } catch (error) {
+      // Fallback to default values on error
+      autoMetrics = {
+        clapScore: 0,
+        spectralRichness: 0,
+        noiseFloor: 0,
+        audioOnsets: 0,
+        message: `Error calling backend: ${error.message || error}`
+      };
+      console.error("Error fetching audio metrics:", error);
+    } finally {
+      setIsLoadingMetrics(false);
+    }
     
-    await saveResults(evaluationData);
-    onSave?.(evaluationData);
-    setIsSaving(false);
-  }, [personName, humanScores, feedback, saveResults, onSave]);
+    setAutoMetrics(autoMetrics);
+    setStep("results");
+
+  }, [audioBase64, storyText]);
+
+  // Calculate final score from human scores (average * 2 to get 0-10 scale)
+  const calculateFinalScore = useCallback(() => {
+    const avg = Object.values(humanScores).reduce((sum, val) => sum + val, 0) / Object.values(humanScores).length;
+    return (avg / 5) * 10; // Convert 0-5 scale to 0-10 scale
+  }, [humanScores]);
+
+  
+  const handleSave = useCallback(async () => {
+    if (!audioBase64) {
+      alert("No audio data available to save.");
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveStatus('saving');
+    
+    try {
+      // Convert base64 string to Blob
+      const base64Data = audioBase64.includes(',') 
+        ? audioBase64.split(',')[1] 
+        : audioBase64;
+      
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const audioBlob = new Blob([byteArray], { type: 'audio/wav' });
+
+      // Convert Blob to Base64 for Google Apps Script
+      const reader = new FileReader();
+      reader.readAsDataURL(audioBlob);
+      
+      reader.onloadend = async () => {
+        try {
+          const base64Audio = reader.result;
+          const payload = {
+            personName,
+            humanScores, // { dramatization, syncAccuracy, atmosphericDepth }
+            feedback,
+            autoMetrics:{
+              clapScore: autoMetrics.clapScore,
+              spectralRichness: autoMetrics.spectralRichness,
+              noiseFloor: autoMetrics.noiseFloor,
+              audioOnsets: autoMetrics.audioOnsets,
+            },
+            finalScore: calculateFinalScore().toFixed(1),
+            storyPrompt: storyText || "N/A",
+            audioFile: base64Audio,
+            timestamp: new Date().toLocaleString(),
+          };
+    
+          // Send to Google Apps Script which will handle:
+          // 1. Uploading audio file to Google Drive folder
+          // 2. Writing evaluation data to Google Sheets
+          await fetch("https://script.google.com/macros/s/AKfycbyM1tNf3KQ7CPtgksGODLSO7xnPp3xgAt9DcfQUZ-pRZ3DQqb7jRElay2K4-MVn16XO/exec", {
+            method: "POST",
+            mode: "no-cors", // Required for cross-origin GAS requests
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+    
+          // Since mode is 'no-cors', we won't get a readable response body, 
+          // but we can assume success if no error is thrown.
+          setSaveStatus('success');
+          setTimeout(() => {
+            alert("Results saved successfully to Drive and Sheets!");
+            setSaveStatus(null);
+          }, 500);
+        } catch (error) {
+          console.error("Save failed:", error);
+          setSaveStatus('error');
+          setTimeout(() => {
+            alert("Error saving data.");
+            setSaveStatus(null);
+          }, 500);
+        } finally {
+          setIsSaving(false);
+        }
+      };
+      
+      reader.onerror = () => {
+        console.error("FileReader error");
+        setSaveStatus('error');
+        setIsSaving(false);
+        setTimeout(() => {
+          alert("Error processing audio file.");
+          setSaveStatus(null);
+        }, 500);
+      };
+    } catch (error) {
+      console.error("Save failed:", error);
+      setSaveStatus('error');
+      setIsSaving(false);
+      setTimeout(() => {
+        alert("Error saving data.");
+        setSaveStatus(null);
+      }, 500);
+    }
+  }, [personName, humanScores, feedback, audioBase64, storyText, calculateFinalScore]);
+
+
 
   const getStatusColor = (value, target, isLower = false) => {
     const passed = isLower ? value <= target : value >= target;
     return passed ? "text-emerald-400" : "text-rose-400";
   };
+
 
   if (step === "form") {
     return (
@@ -140,12 +314,21 @@ const EvaluationForm = memo(({ onSave }) => {
         </div>
 
         <Button
-          disabled={!isFormValid}
+          disabled={!isFormValid || isLoadingMetrics}
           onClick={handleSubmit}
           className="w-full mt-6"
         >
-          View Results
-          <ArrowRight className="ml-2 w-4 h-4" />
+          {isLoadingMetrics ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Evaluating Audio...
+            </>
+          ) : (
+            <>
+              View Results
+              <ArrowRight className="ml-2 w-4 h-4" />
+            </>
+          )}
         </Button>
       </motion.div>
     );
@@ -155,8 +338,23 @@ const EvaluationForm = memo(({ onSave }) => {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="glass-panel p-6 rounded-xl border border-border/30"
+      className="glass-panel p-6 rounded-xl border border-border/30 relative"
     >
+      {/* Saving Overlay */}
+      {isSaving && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-xl z-50 flex flex-col items-center justify-center gap-4"
+        >
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          <div className="text-center">
+            <p className="font-display text-lg text-foreground mb-1">Saving Results</p>
+            <p className="text-sm text-muted-foreground">Uploading to Google Drive and Sheets...</p>
+          </div>
+        </motion.div>
+      )}
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-display text-lg tracking-wider text-foreground">
           EVALUATION RESULTS
@@ -190,22 +388,48 @@ const EvaluationForm = memo(({ onSave }) => {
               </TableCell>
             </TableRow>
           ))}
-          {automatedMetrics.map((metric) => (
-            <TableRow key={metric.name} className="border-border/20">
-              <TableCell>
-                <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded">Auto</span>
-              </TableCell>
-              <TableCell className="text-foreground text-sm">{metric.name}</TableCell>
-              <TableCell className={`text-right font-mono ${getStatusColor(metric.value, metric.target, metric.isLower)}`}>
-                {metric.value < 1 && metric.value > -1
-                  ? (metric.value * 100).toFixed(0) + '%'
-                  : metric.value + (metric.isLower ? ' dB' : '')}
-              </TableCell>
-              <TableCell className="text-center">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mx-auto" />
-              </TableCell>
-            </TableRow>
-          ))}
+          {autoMetrics && Object.entries(autoMetrics)
+            .filter(([key]) => key !== 'message') // Exclude message from display
+            .map(([key, value]) => {
+              const config = automatedMetricsConfig[key];
+              if (!config) return null; // Skip if no config found
+              
+              const { name, target, isLower, format } = config;
+              const passed = isLower ? value <= target : value >= target;
+              
+              // Format the value based on type
+              let formattedValue;
+              if (format === "percent") {
+                formattedValue = (value * 100).toFixed(0) + '%';
+              } else if (format === "db") {
+                formattedValue = value.toFixed(1) + ' dB';
+              } else if (format === "float") {
+                formattedValue = value.toFixed(3);
+              } else {
+                formattedValue = value.toFixed(0);
+              }
+              
+              return (
+                <TableRow key={key} className="border-border/20">
+                  <TableCell>
+                    <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded">Algorithmic</span>
+                  </TableCell>
+                  <TableCell className="text-foreground text-sm">{name}</TableCell>
+                  <TableCell className={`text-right font-mono ${getStatusColor(value, target, isLower)}`}>
+                    {formattedValue}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {passed ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 mx-auto" />
+                    ) : (
+                      <Star className="w-4 h-4 text-muted-foreground mx-auto" />
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })
+            .filter(Boolean) // Remove null entries
+          }
         </TableBody>
       </Table>
 
@@ -213,15 +437,46 @@ const EvaluationForm = memo(({ onSave }) => {
       <div className="mt-6 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-between">
         <div>
           <p className="text-xs text-emerald-400/70 uppercase tracking-wider">Final Score</p>
-          <h4 className="text-2xl font-bold text-emerald-400">8.4 / 10</h4>
+          <h4 className="text-2xl font-bold text-emerald-400">
+            {calculateFinalScore().toFixed(1)} / 10
+          </h4>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setStep("form")}>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setStep("form")}
+            disabled={isSaving}
+          >
             Re-evaluate
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={isSaving}>
-            <Save className="w-4 h-4 mr-2" />
-            {isSaving ? "Saving..." : "Save Results"}
+          <Button 
+            size="sm" 
+            onClick={handleSave} 
+            disabled={isSaving}
+            className={saveStatus === 'success' ? 'bg-emerald-500 hover:bg-emerald-600' : ''}
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : saveStatus === 'success' ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 mr-2" />
+                Saved!
+              </>
+            ) : saveStatus === 'error' ? (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Retry Save
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Save Results
+              </>
+            )}
           </Button>
         </div>
       </div>
