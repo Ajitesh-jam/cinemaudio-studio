@@ -10,7 +10,7 @@ import CurveSelector from "./mixer/CurveSelector";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 
-const AudioCard = memo(({ 
+const AudioCard = memo(({
   id,
   type = "SFX",
   prompt = "Thunderstorm with distant rumbling",
@@ -21,8 +21,8 @@ const AudioCard = memo(({
   audioBase64 = null,
   audio_base64 = null,
   isRegenerating = false,
-  handleUpdate = () => {},
-  onRegenerate = () => {},
+  handleUpdate = () => { },
+  onRegenerate = () => { },
 }) => {
   const audioRef = useRef(null);
   const intervalRef = useRef(null);
@@ -38,7 +38,7 @@ const AudioCard = memo(({
 
   // Get audio data from either prop name
   const audioData = audioBase64 || audio_base64;
-  
+
   // Convert duration_ms to seconds for display
   const durationSeconds = duration_ms / 1000;
 
@@ -55,15 +55,15 @@ const AudioCard = memo(({
       audioRef.current.pause();
       audioRef.current = null;
     }
-    
+
     if (audioData) {
-      const audioUrl = audioData.startsWith('data:') 
-        ? audioData 
+      const audioUrl = audioData.startsWith('data:')
+        ? audioData
         : `data:audio/wav;base64,${audioData}`;
-      
+
       audioRef.current = new Audio(audioUrl);
       audioRef.current.volume = Math.max(0, Math.min(1, (volume + 12) / 12)); // Convert dB to 0-1 range
-      
+
       audioRef.current.onended = () => {
         setIsPlaying(false);
         setCurrentTime(0);
@@ -71,7 +71,7 @@ const AudioCard = memo(({
           clearInterval(intervalRef.current);
         }
       };
-      
+
       audioRef.current.ontimeupdate = () => {
         if (audioRef.current) {
           setCurrentTime(audioRef.current.currentTime);
@@ -151,16 +151,51 @@ const AudioCard = memo(({
   }, [id, handleUpdate]);
 
   // Handle regenerate
-  const handleRegenerate = useCallback(() => {
-    if (onRegenerate) {
-      onRegenerate(id);
+  const handleRegenerate = async () => {
+    const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
+    let endpoint = "";
+    let payload = {};
+
+    // Handle both narrator cues and regular audio cues
+    if (type === "NARRATOR") {
+      endpoint = "/v1/generate-narrator-cue";
+      payload = {
+        id: id,
+        audio_type: type,
+        story: editablePrompt, // For narrator, prompt is story
+        narrator_description: narrator_description || "",
+        start_time_ms: start_time_ms,
+        duration_ms: duration_ms
+      };
+    } else {
+      endpoint = "/v1/generate-audio-cue";
+      payload = {
+        id: id,
+        audio_type: type,
+        prompt: editablePrompt,
+        start_time_ms: start_time_ms,
+        duration_ms: duration_ms,
+        weight_db: volume,
+        fade_ms: fade_ms
+      };
     }
-  }, [id, onRegenerate]);
+
+    await fetch(`${apiBase}${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+  }
 
   const typeColors = {
     SFX: "bg-primary/20 text-primary border-primary/50",
+    AMBIENCE: "bg-secondary/20 text-secondary border-secondary/50",
     Ambience: "bg-secondary/20 text-secondary border-secondary/50",
+    MUSIC: "bg-neon-purple/20 text-neon-purple border-neon-purple/50",
     Music: "bg-neon-purple/20 text-neon-purple border-neon-purple/50",
+    NARRATOR: "bg-orange-500/20 text-orange-400 border-orange-500/50",
     Dialogue: "bg-orange-500/20 text-orange-400 border-orange-500/50",
   };
 
@@ -180,8 +215,8 @@ const AudioCard = memo(({
     >
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
-        <Badge 
-          variant="outline" 
+        <Badge
+          variant="outline"
           className={`font-display text-[10px] tracking-wider ${typeColors[type] || typeColors.SFX}`}
         >
           {type}
@@ -197,26 +232,26 @@ const AudioCard = memo(({
         {audioData && (
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-        
-        
-          <Button 
-            type="button"
-            variant="outline"
-            size="sm"
-            className="ml-2 flex items-center gap-1 px-2 py-1 text-xs"
-            onClick={handleRegenerate}
-            disabled={isRegenerating}
-          >
-            {isRegenerating ? (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin mr-1" /> Regenerating
-              </>
-            ) : (
-              <>
-                <RotateCcw className="w-3 h-3 mr-1" /> Regenerate
-              </>
-            )}
-          </Button>
+
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="ml-2 flex items-center gap-1 px-2 py-1 text-xs"
+              onClick={handleRegenerate}
+              disabled={isRegenerating}
+            >
+              {isRegenerating ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin mr-1" /> Regenerating
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-3 h-3 mr-1" /> Regenerate
+                </>
+              )}
+            </Button>
           </div>
         )}
       </div>
@@ -232,28 +267,28 @@ const AudioCard = memo(({
               </div>
             )}
           </div>
-          
+
           <div className="relative mt-2" style={{ width: '100%', maxWidth: '800px' }}>
-            <Waveform 
-              width={800} 
-              height={80} 
+            <Waveform
+              width={800}
+              height={80}
               bars={50}
               isPlaying={isPlaying}
               highlightStart={fadeIn}
               highlightEnd={fadeOut}
             />
-            
+
             {/* Playhead indicator */}
             {audioData && (
               <div
                 className="absolute top-0 bottom-0 w-0.5 bg-secondary shadow-[0_0_8px_hsl(var(--secondary))] z-20 pointer-events-none"
-                style={{ 
+                style={{
                   left: `${(currentTime / durationSeconds) * 100}%`,
                   display: isPlaying ? 'block' : 'none'
                 }}
               />
             )}
-            
+
             {/* Draggable Markers */}
             <DraggableMarker
               position={fadeIn}
@@ -288,13 +323,13 @@ const AudioCard = memo(({
 
         {/* Mixer Section */}
         <div className="flex gap-3 flex-shrink-0">
-          <VerticalFader 
-            value={volume} 
+          <VerticalFader
+            value={volume}
             onChange={handleVolumeChange}
             label="VOL"
           />
-          <SpatialPanPad 
-            size={100} 
+          <SpatialPanPad
+            size={100}
             x={pan.x}
             y={pan.y}
             onChange={handlePanChange}
@@ -318,10 +353,10 @@ const AudioCard = memo(({
             <Play className="w-4 h-4 text-primary" />
           )}
         </Button>
-        
-        
+
+
         <div className="flex-1" />
-        
+
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Volume2 className="w-3 h-3" />

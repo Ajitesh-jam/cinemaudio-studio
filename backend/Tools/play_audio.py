@@ -1,48 +1,60 @@
-# import sys
-# import os
-# import torchaudio
-# import torch
-
-# # Get absolute path of project root (one level up from current notebook)
-# project_root = os.path.abspath("..")
-
-# # Add to sys.path if not already
-# if project_root not in sys.path:
-#     sys.path.append(project_root)
-# print("Project root added to sys.path:", project_root)
-
+import numpy as np
+from pydub import AudioSegment
 
 from headers.imports import *
-from Variable.dataclases import AudioCue
+from Variable.dataclases import AudioCue, NarratorCue, Cue
 from Variable.model_map import SPECIALIST_MAP
-# from Variable.audio_classes_dict import SOUND_KEYWORDS
-
+from helper.lib import ParlerTTSModel
 
 logger = logging.getLogger(__name__)
 
+def _tts_numpy_to_audio_segment(audio_arr: np.ndarray, duration_ms: int) -> AudioSegment:
+    """Convert TTS numpy output (float32) to AudioSegment."""
+    model = ParlerTTSModel.get_instance()["model"]
+    sample_rate = model.config.sampling_rate
+    gain = 0.9
+    audio_arr = np.clip(audio_arr, -1.0, 1.0)
+    audio_bytes = (audio_arr * 32767 * gain).astype(np.int16).tobytes()
+    seg = AudioSegment(
+        data=audio_bytes,
+        sample_width=2,
+        frame_rate=sample_rate,
+        channels=1,
+    )
+    if len(seg) > duration_ms:
+        seg = seg[:duration_ms]
+    return seg  # type: ignore[return-value]
 
-def create_audio_from_audiocue(audio_cue: AudioCue)->AudioSegment:
+
+def create_audio_from_audiocue(audio_cue: Cue) -> AudioSegment:
     """
-    creates a single audio clip from a single audio cue.
+    Create a single audio clip from a single cue (AudioCue or NarratorCue).
     """
-    logger.info(f"Creating audio from audio cue: {audio_cue.audio_class} ({audio_cue.audio_type})")
-    specialist_func = SPECIALIST_MAP[audio_cue.audio_type]
-    audio_clip = specialist_func(audio_cue.audio_class, audio_cue.duration_ms)
+    logger.info(f"Creating audio from cue: {audio_cue}\n\n")
     
-    fade_time = min(audio_cue.fade_ms, audio_cue.duration_ms // 2) 
-    processed_clip = audio_clip.fade_in(fade_time).fade_out(fade_time)
-    processed_clip = processed_clip + audio_cue.weight_db 
-    return processed_clip
-   
+    if isinstance(audio_cue, NarratorCue):
+        logger.info(f"Creating audio from narrator cue: {audio_cue.id} ({audio_cue.audio_type})")
+        specialist_func = SPECIALIST_MAP[audio_cue.audio_type]
+        audio_arr = specialist_func(audio_cue.story, audio_cue.narrator_description)
+        clip = _tts_numpy_to_audio_segment(audio_arr, audio_cue.duration_ms)
+        fade_ms = min(100, audio_cue.duration_ms // 4)
+        faded = clip.fade_in(fade_ms).fade_out(fade_ms)
+        return faded  # type: ignore[return-value]
+    else:
+        logger.info(f"Creating audio from audio cue: {audio_cue.audio_class} ({audio_cue.audio_type})")
+        specialist_func = SPECIALIST_MAP[audio_cue.audio_type]
+        audio_clip = specialist_func(audio_cue.audio_class, audio_cue.duration_ms)
+        fade_time = min(audio_cue.fade_ms, audio_cue.duration_ms // 2)
+        processed_clip = audio_clip.fade_in(fade_time).fade_out(fade_time)
+        processed_clip = processed_clip + audio_cue.weight_db
+        return processed_clip
 
-def save_audio_from_audiocue(audio_cue: AudioCue, output_path: str):
+
+def save_audio_from_audiocue(audio_cue: Cue, output_path: str) -> AudioSegment:
     processed_clip = create_audio_from_audiocue(audio_cue)
     processed_clip.export(output_path, format="wav")
     logger.info(f"Saved audio to {output_path}")
     return processed_clip
-
-
-
 
 # # test this function
 # if __name__ == "__main__":

@@ -24,28 +24,32 @@ if project_root not in sys.path:
 from Variable.dataclases import (
     AudioCue,
     AudioCueWithAudioBase64,
+    Cue,
     DecideCuesRequest,
     DecideCuesResponse,
     EvaluateAudioRequest,
     EvaluateAudioResponse,
     GenerateAudioFromCuesRequest,
     GenerateAudioFromCuesResponse,
-    GenerateFromStoryRequest,GenerateFromStoryResponse,
-    GenerateAudioCuesWithAudioBase64Request,GenerateAudioCuesWithAudioBase64Response
+    GenerateFromStoryRequest,
+    GenerateFromStoryResponse,
+    GenerateAudioCuesWithAudioBase64Request,
+    GenerateAudioCuesWithAudioBase64Response
 )
+from helper.audio_conversions import dict_to_cue
 
-from Variable.configurations import READING_SPEED_WPS
+from Variable.configurations import READING_SPEED_WPS, PARALLEL_EXECUTION, PARALLEL_WORKERS
 from Tools.decide_audio import decide_audio_cues
 from superimposition_model.superimposition_model import superimpose_audio_cues, superimpose_audio_cues_with_audio_base64,superimposition_model
 from Evaluation.evaluator import AudioEvaluator
 from helper.audio_conversions import audio_to_base64
 from helper.parallel_audio_generation import parallel_audio_generation
-
+from helper.lib import TangoFluxModel, ParlerTTSModel
 
 # Configure logging to explicitly output to stdout/stderr
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(name)s - %(levelname)s - %(message)s\n',
     handlers=[
         logging.StreamHandler(sys.stdout)  # Explicitly use stdout for all logs
     ],
@@ -69,6 +73,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def preload_models():
+    """Preload specialist models at startup so they are downloaded once before first request."""
+    logger.info("Preloading specialist models...")
+    
+    # Preload ParlerTTS model (always needed)
+    ParlerTTSModel.get_instance()
+    logger.info("Preloaded ParlerTTS model")
+    
+    # Preload TangoFlux models based on execution mode
+    if PARALLEL_EXECUTION:
+        # Parallel mode: pre-initialize model pool with PARALLEL_WORKERS instances
+        logger.info(f"Pre-initializing TangoFlux model pool with {PARALLEL_WORKERS} workers for parallel execution...")
+        TangoFluxModel.initialize_pool(PARALLEL_WORKERS)
+        logger.info(f"Preloaded {PARALLEL_WORKERS} TangoFlux model instances for parallel execution")
+    else:
+        # Sequential mode: preload single instance
+        TangoFluxModel.get_instance()
+        logger.info("Preloaded TangoFlux model (sequential mode)")
+    
+    logger.info("All specialist models preloaded\n\n")
+
 
 # API Endpoints
 @app.get("/")
@@ -125,14 +153,18 @@ async def decide_audio_cues_handler(request: DecideCuesRequest):
 async def generate_audio_from_cues_handler(request: GenerateAudioFromCuesRequest):
     """
     Generate final superimposed audio from audio cues.
-    
+
     This endpoint takes a list of audio cues and generates the final
     superimposed audio track.
     """
     try:
-        logger.info(f"Generating audio from {len(request.cues)} cues")
         
-        audio_cues = parallel_audio_generation(request.cues)
+        logger.info(f"Request: {request}\n\n")
+        
+        
+        logger.info(f"Generating audio from {len(request.cues)} cues")
+        cues = [dict_to_cue(c.model_dump()) for c in request.cues]
+        audio_cues = parallel_audio_generation(cues)
         return GenerateAudioFromCuesResponse(
             audio_cues=audio_cues,
             message="Successfully generated audio"
@@ -154,22 +186,20 @@ async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAu
         logger.info(f"Generating audio cues with audio base64 from story: {request.story_text[:50]}...")
         audio_cues = []
         for cue in request.cues:
-            # If already AudioCueWithAudioBase64, but fields may be pydantic models, convert to dataclasses:
-            audio_cue = cue.audio_cue
-            # If audio_cue is not a dataclass instance, convert
-            if not hasattr(audio_cue, "__dataclass_fields__"):
-                audio_cue = AudioCue(
-                    id=audio_cue.id,
-                    audio_class=audio_cue.audio_class,
-                    audio_type=audio_cue.audio_type,
-                    start_time_ms=audio_cue.start_time_ms,
-                    duration_ms=audio_cue.duration_ms,
-                    weight_db=audio_cue.weight_db,
-                    fade_ms=audio_cue.fade_ms,
-                )
+            raw = cue.audio_cue
+            if hasattr(raw, "__dataclass_fields__"):
+                resolved: Cue = raw  # type: ignore[assignment]
+            else:
+                if hasattr(raw, "model_dump"):
+                    d = raw.model_dump()  # type: ignore[union-attr]
+                elif hasattr(raw, "keys"):
+                    d = dict(raw)  # type: ignore[arg-type]
+                else:
+                    d = {f: getattr(raw, f, None) for f in ("id", "audio_type", "start_time_ms", "duration_ms", "audio_class", "weight_db", "fade_ms", "story", "narrator_description")}
+                resolved = dict_to_cue(d)
             audio_cues.append(
                 AudioCueWithAudioBase64(
-                    audio_cue=audio_cue,
+                    audio_cue=resolved,
                     audio_base64=cue.audio_base64,
                     duration_ms=cue.duration_ms
                 )

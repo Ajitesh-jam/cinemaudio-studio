@@ -5,3 +5,5 @@ Debugs/*
 .env
 *.pyc
 __pycache__/
+*.wav
+Test/*

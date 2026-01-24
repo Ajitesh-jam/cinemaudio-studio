@@ -32,6 +32,10 @@ MODIFIER_WORDS = {
 # When step_index=48, it accesses step_index+1=49 which is valid
 STEPS=48
 
+# Parallel execution configuration
+PARALLEL_EXECUTION = True  # Set to False for sequential execution (thread-safe but slower)
+PARALLEL_WORKERS = 2  # Number of worker threads/processes for parallel execution (default: 2)
+
 
 SFX_RATE=44100
 SFX_GAIN=0.5

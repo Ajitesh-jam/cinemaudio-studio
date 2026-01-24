@@ -14,9 +14,8 @@ import base64
 import io
 from pydub import AudioSegment
 import logging
-from typing import List
-from Variable.dataclases import AudioCue, AudioCueWithAudioBase64
-from Variable.model_map import SPECIALIST_MAP
+from typing import List, Sequence
+from Variable.dataclases import Cue, AudioCueWithAudioBase64
 from Tools.play_audio import create_audio_from_audiocue
 from Tools.decide_audio import decide_audio_cues
 from Variable.configurations import READING_SPEED_WPS
@@ -26,7 +25,7 @@ from helper.audio_conversions import base64_to_audio
 
 logger = logging.getLogger(__name__)
 
-def superimpose_audio(audio_cues: List[AudioCue], total_duration_ms: int):
+def superimpose_audio(audio_cues: Sequence[Cue], total_duration_ms: int):
     """
     Superimposes all audio cues into a single track.
     """
@@ -37,7 +36,7 @@ def superimpose_audio(audio_cues: List[AudioCue], total_duration_ms: int):
         final_audio = final_audio.overlay(create_audio_from_audiocue(cue))
     return final_audio
 
-def superimpose_audio_cues(audio_cues: List[AudioCue], total_duration_ms: int):
+def superimpose_audio_cues(audio_cues: Sequence[Cue], total_duration_ms: int):
     """
     Superimposes all audio cues into a single track.
     """
