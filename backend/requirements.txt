@@ -20,6 +20,8 @@ scipy>=1.11.0
 # Audio Generation Models
 # TangoFlux must be installed from GitHub
 git+https://github.com/declare-lab/TangoFlux.git
+git+https://github.com/huggingface/parler-tts.git
+
 laion-clap>=1.1.0
 
 # NLP
@@ -28,6 +30,7 @@ spacy>=3.7.0
 # Google Gemini API (try new package first, fallback to old)
 google-genai>=0.1.0
 google-generativeai>=0.3.0
+langchain_core
 
 # Environment Variables
 python-dotenv>=1.0.0
