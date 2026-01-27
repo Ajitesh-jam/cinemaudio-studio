@@ -7,6 +7,7 @@ import FloatingParticles from "../components/FloatingParticles";
 import AnimatedLoader from "../components/ui/AnimatedLoader";
 import FinalAudioPlayer from "../components/FinalAudioPlayer";
 import EvaluationForm from "../components/EvaluationForm.jsx";
+import { Button } from "../components/ui/button";
 
 
 const Index = () => {
@@ -16,7 +17,7 @@ const Index = () => {
   const [showEvaluation, setShowEvaluation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [finalAudio, setFinalAudio] = useState(null);
-
+  const [enableNarrator, setEnableNarrator] = useState(false);
   const handleDecompose = (storyText) => {
 
     //restore the audio cues
@@ -59,7 +60,12 @@ const Index = () => {
               audio_type: "NARRATOR",
               start_time_ms: cue.start_time_ms || 0,
               duration_ms: cue.duration_ms || 10,
-              audioBase64: null
+              audioBase64: null,
+              evaluation: {
+                promptAdherence: 0,
+                acousticNaturalness: 0,
+                recognitionRate: 0
+              }
             });
           } else {
             audioCueList.push({
@@ -70,7 +76,12 @@ const Index = () => {
               duration_ms: cue.duration_ms || 10,
               weight_db: cue.weight_db || 0,
               fade_ms: cue.fade_ms || 500,
-              audioBase64: null
+              audioBase64: null,
+              evaluation: {
+                promptAdherence: 0,
+                acousticNaturalness: 0,
+                recognitionRate: 0
+              }
             });
           }
         });
@@ -204,9 +215,37 @@ const Index = () => {
   };
 
   const handleNarratorUpdate = (cueId, updates) => {
+
     setNarratorCues(prevCues =>
       prevCues.map(cue =>
         cue.id === cueId ? { ...cue, ...updates } : cue
+      )
+    );
+    console.log("narratorCues :", narratorCues);
+  };
+
+  const handleEvaluationUpdate = (cueId, evaluationUpdates) => {
+    setAudioCues(prevCues =>
+      prevCues.map(cue =>
+        cue.id === cueId 
+          ? { 
+              ...cue, 
+              evaluation: { ...cue.evaluation, ...evaluationUpdates }
+            } 
+          : cue
+      )
+    );
+  };
+
+  const handleNarratorEvaluationUpdate = (cueId, evaluationUpdates) => {
+    setNarratorCues(prevCues =>
+      prevCues.map(cue =>
+        cue.id === cueId 
+          ? { 
+              ...cue, 
+              evaluation: { ...cue.evaluation, ...evaluationUpdates }
+            } 
+          : cue
       )
     );
   };
@@ -214,6 +253,7 @@ const Index = () => {
   const handleMasterMix = () => {
 
     // Combine audio cues and narrator cues for master mix
+    setFinalAudio(null);
     const audioCuePayload = audioCues.map((cue) => ({
       audio_cue: {
         id: cue.id,
@@ -235,7 +275,8 @@ const Index = () => {
         narrator_description: cue.narrator_description,
         audio_type: cue.audio_type,
         start_time_ms: cue.start_time_ms,
-        duration_ms: cue.duration_ms
+        duration_ms: cue.duration_ms,
+        weight_db: cue.weight_db || 0
       },
       audio_base64: cue.audioBase64,
       duration_ms: cue.duration_ms
@@ -327,6 +368,8 @@ const Index = () => {
         {/* Hero Section */}
         <HeroSection isLoading={isLoading} onDecompose={handleDecompose} storyText={storyText} setStoryText={setStoryText} handleUpdate={handleUpdate} />
 
+        
+
         {/* Narrator Cues Section */}
         <AnimatePresence>
           {narratorCues.length > 0 && (
@@ -361,12 +404,15 @@ const Index = () => {
                         id={cue.id}
                         type="NARRATOR"
                         prompt={cue.story || "Narrator audio"}
+                        narrator_description={cue.narrator_description || "Narrator audio"}
                         start_time_ms={cue.start_time_ms}
                         duration_ms={cue.duration_ms}
                         weight_db={0}
                         fade_ms={500}
                         audio_base64={cue.audioBase64}
                         handleUpdate={handleNarratorUpdate}
+                        evaluation={cue.evaluation || { promptAdherence: 0, acousticNaturalness: 0, recognitionRate: 0 }}
+                        onEvaluationUpdate={handleNarratorEvaluationUpdate}
                       />
                     </motion.div>
                   ))}
@@ -415,6 +461,8 @@ const Index = () => {
                         fade_ms={cue.fade_ms}
                         audio_base64={cue.audioBase64}
                         handleUpdate={handleUpdate}
+                        evaluation={cue.evaluation || { promptAdherence: 0, acousticNaturalness: 0, recognitionRate: 0 }}
+                        onEvaluationUpdate={handleEvaluationUpdate}
                       />
                     </motion.div>
                   ))}
@@ -458,6 +506,116 @@ const Index = () => {
                 audioBase64={finalAudio.audioBase64}
                 duration={finalAudio.duration}
               />
+              
+              {/* Evaluation Instructions */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="glass-panel p-6 rounded-xl border border-border/30 bg-slate-900/50 backdrop-blur-md"
+              >
+                <div className="mb-6">
+                  <h3 className="text-lg font-display font-bold text-foreground mb-2">
+                    Evaluation Guidelines
+                  </h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Please rate the generated audio on the following 5 parameters using a Likert Scale (1-5):
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Parameter 1 */}
+                  <div className="p-4 rounded-lg bg-slate-800/30 border border-emerald-500/20">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="text-sm font-semibold text-foreground mb-1">
+                          1. Temporal Synchronization (Sync Accuracy)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          <strong>Definition:</strong> The precision of sound placement relative to the narrator's voice.
+                        </p>
+                        <p className="text-xs text-slate-400 italic">
+                          <strong>How to Judge:</strong> "Watch the timeline closely. If the story mentions 'rain started' and the audio begins exactly at that word, give it a 5. If the sound is delayed or triggers too early, distracting from the narrative, give it a 1 or 2."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Parameter 2 */}
+                  <div className="p-4 rounded-lg bg-slate-800/30 border border-blue-500/20">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-blue-500 mt-2 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="text-sm font-semibold text-foreground mb-1">
+                          2. Semantic Alignment (Semantic Fit)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          <strong>Definition:</strong> The accuracy of the AI's choice of sound based on the story's meaning.
+                        </p>
+                        <p className="text-xs text-slate-400 italic">
+                          <strong>How to Judge:</strong> "Does the specialist model generate the correct vibe? If the text describes a 'creaky old door' and you hear a modern sliding door, the score should be lower. We are looking for how well the LLM-Decider understood the descriptive adjectives."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Parameter 3 */}
+                  <div className="p-4 rounded-lg bg-slate-800/30 border border-yellow-500/20">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-yellow-500 mt-2 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="text-sm font-semibold text-foreground mb-1">
+                          3. Audio Fidelity & Richness (Acoustic Quality)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          <strong>Definition:</strong> The technical clarity of the generated clips.
+                        </p>
+                        <p className="text-xs text-slate-400 italic">
+                          <strong>How to Judge:</strong> "Listen for 'crustiness,' static, or robotic chirps (AI artifacts). A 5 represents studio-quality sound. A 1 represents audio that sounds heavily compressed, muffled, or filled with unpleasant digital noise."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Parameter 4 */}
+                  <div className="p-4 rounded-lg bg-slate-800/30 border border-red-500/20">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-red-500 mt-2 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="text-sm font-semibold text-foreground mb-1">
+                          4. Atmospheric Cohesion (Narrative Flow)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          <strong>Definition:</strong> How well the SFX, Ambience, and Music sit together under the Narrator.
+                        </p>
+                        <p className="text-xs text-slate-400 italic">
+                          <strong>How to Judge:</strong> "Does the background music drown out the narrator? (Poor Ducking). Do the SFX feel like they are in the same 'room' as the ambience? If the layers feel like they are fighting each other rather than blending into a scene, score it lower."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Parameter 5 */}
+                  <div className="p-4 rounded-lg bg-slate-800/30 border border-purple-500/20">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-purple-500 mt-2 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="text-sm font-semibold text-foreground mb-1">
+                          5. Cinematic Impact
+                        </h4>
+                        <p className="text-xs text-muted-foreground mb-2">
+                          <strong>Definition:</strong> How well the audio enhances the story's emotional engagement and immersion.
+                        </p>
+                        <p className="text-xs text-slate-400 italic">
+                          <strong>How to Judge:</strong> "Does the audio actually make the story more engaging/immersive? Does it add dramatic value and enhance the narrative experience? Rate based on overall impact on storytelling."
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
               <EvaluationForm
                 audioBase64={finalAudio.audioBase64}
                 storyText={storyText}

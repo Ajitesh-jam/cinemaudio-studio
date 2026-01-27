@@ -36,6 +36,7 @@ def create_audio_from_audiocue(audio_cue: Cue) -> AudioSegment:
         logger.info(f"Creating audio from narrator cue: {audio_cue.id} ({audio_cue.audio_type})")
         specialist_func = SPECIALIST_MAP[audio_cue.audio_type]
         audio_arr = specialist_func(audio_cue.story, audio_cue.narrator_description)
+        audio_arr = audio_arr * int((audio_cue.weight_db + 20) / 10)
         clip = _tts_numpy_to_audio_segment(audio_arr, audio_cue.duration_ms)
         fade_ms = min(100, audio_cue.duration_ms // 4)
         faded = clip.fade_in(fade_ms).fade_out(fade_ms)

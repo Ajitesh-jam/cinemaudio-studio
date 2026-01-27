@@ -35,9 +35,11 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
   const [step, setStep] = useState("form");
   const [personName, setPersonName] = useState("");
   const [humanScores, setHumanScores] = useState({
-    dramatization: 0,
     syncAccuracy: 0,
-    atmosphericDepth: 0,
+    semanticFit: 0,
+    acousticQuality: 0,
+    narrativeFlow: 0,
+    cinematicImpact: 0,
   });
 
   const [autoMetrics, setAutoMetrics] = useState({
@@ -171,19 +173,19 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
         try {
           const base64Audio = reader.result;
           const payload = {
+            requestType: "MASTER", // Required for routing in Google Apps Script
             personName,
-            humanScores, // { dramatization, syncAccuracy, atmosphericDepth }
-            feedback,
-            autoMetrics:{
-              clapScore: autoMetrics.clapScore,
-              spectralRichness: autoMetrics.spectralRichness,
-              noiseFloor: autoMetrics.noiseFloor,
-              audioOnsets: autoMetrics.audioOnsets,
+            storyPrompt: storyText || "N/A",
+            scores: {
+              sync: humanScores.syncAccuracy || 0,
+              fit: humanScores.semanticFit || 0,
+              quality: humanScores.acousticQuality || 0,
+              flow: humanScores.narrativeFlow || 0,
+              impact: humanScores.cinematicImpact || 0,
             },
             finalScore: calculateFinalScore().toFixed(1),
-            storyPrompt: storyText || "N/A",
+            feedback: feedback || "",
             audioFile: base64Audio,
-            timestamp: new Date().toLocaleString(),
           };
 
           console.log("payload :", payload);
@@ -191,7 +193,7 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
           // Send to Google Apps Script which will handle:
           // 1. Uploading audio file to Google Drive folder
           // 2. Writing evaluation data to Google Sheets
-          await fetch("https://script.google.com/macros/s/AKfycbyM1tNf3KQ7CPtgksGODLSO7xnPp3xgAt9DcfQUZ-pRZ3DQqb7jRElay2K4-MVn16XO/exec", {
+          await fetch("https://script.google.com/macros/s/AKfycbw6_DAzY9GvAmJ4cXwW1Ead0Fos7xydW-bZB50MZj1fOYzpy-ovDz55cm8HSkj3J5eJ/exec", {
             method: "POST",
             mode: "no-cors", // Required for cross-origin GAS requests
             headers: { "Content-Type": "application/json" },
@@ -274,9 +276,11 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
         {/* Rating Questions */}
         <div className="space-y-6">
           {[
-            { id: "dramatization", label: "Dramatization", sub: "Emotional capture" },
-            { id: "syncAccuracy", label: "Sync Accuracy", sub: "Timeline alignment" },
-            { id: "atmosphericDepth", label: "Atmospheric Depth", sub: "Spatial immersion" },
+            { id: "syncAccuracy", label: "Sync Accuracy", sub: "Temporal Alignment - Does the sound happen exactly when the narrator says it?" },
+            { id: "semanticFit", label: "Semantic Fit", sub: "Contextual Relevance - Does the sound match the meaning of the text?" },
+            { id: "acousticQuality", label: "Acoustic Quality", sub: "Audio Fidelity - Is the sound clear, or is it distorted/noisy?" },
+            { id: "narrativeFlow", label: "Narrative Flow", sub: "Seamlessness - Do transitions between sounds feel natural?" },
+            { id: "cinematicImpact", label: "Cinematic Impact", sub: "Dramatization - Does the audio make the story more engaging?" },
           ].map((q) => (
             <div key={q.id}>
               <div className="flex justify-between mb-2">

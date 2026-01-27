@@ -11,3 +11,7 @@ pip install ipykernel
 python -m ipykernel install --user --name <Env name> --display-name "<Env name to display>"
 pip install spacy
 python -m spacy download en_core_web_sm
+
+
+for conda environment:
+conda install -c conda-forge ffmpeg

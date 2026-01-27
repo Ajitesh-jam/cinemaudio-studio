@@ -29,9 +29,11 @@ const automatedMetrics = [
 const EvaluationGrid = () => {
   const [step, setStep] = useState("questions");
   const [humanScores, setHumanScores] = useState({
-    dramatization: 0,
     syncAccuracy: 0,
-    atmosphericDepth: 0,
+    semanticFit: 0,
+    acousticQuality: 0,
+    narrativeFlow: 0,
+    cinematicImpact: 0,
   });
   const [feedback, setFeedback] = useState("");
 
@@ -77,9 +79,11 @@ const EvaluationGrid = () => {
 
             <div className="space-y-8">
               {[
-                { id: "dramatization", label: "Dramatization", sub: "How well does the audio capture the story's emotion?" },
-                { id: "syncAccuracy", label: "Sync Accuracy", sub: "Do events align perfectly with the text timeline?" },
-                { id: "atmosphericDepth", label: "Atmospheric Depth", sub: "Spatial immersion and background realism." },
+                { id: "syncAccuracy", label: "Sync Accuracy", sub: "Temporal Alignment - Does the sound happen exactly when the narrator says it?" },
+                { id: "semanticFit", label: "Semantic Fit", sub: "Contextual Relevance - Does the sound match the meaning of the text?" },
+                { id: "acousticQuality", label: "Acoustic Quality", sub: "Audio Fidelity - Is the sound clear, or is it distorted/noisy?" },
+                { id: "narrativeFlow", label: "Narrative Flow", sub: "Seamlessness - Do transitions between sounds feel natural?" },
+                { id: "cinematicImpact", label: "Cinematic Impact", sub: "Dramatization - Does the audio make the story more engaging?" },
               ].map((q) => (
                 <div key={q.id} className="space-y-3">
                   <div className="flex justify-between items-end">

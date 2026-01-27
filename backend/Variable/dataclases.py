@@ -21,6 +21,7 @@ class NarratorCue(BaseCue):
     """Stores all information needed for a narrator TTS cue."""
     story: str
     narrator_description: str
+    weight_db: float = 0
 
 Cue = Union[AudioCue, NarratorCue]
 @dataclass

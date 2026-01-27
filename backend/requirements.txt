@@ -16,6 +16,7 @@ torchaudio>=2.0.0
 # Scientific Computing
 numpy>=1.24.0
 scipy>=1.11.0
+transformers>=4.46.1
 
 # Audio Generation Models
 # TangoFlux must be installed from GitHub

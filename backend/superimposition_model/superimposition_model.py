@@ -56,7 +56,8 @@ def superimpose_audio_cues_with_audio_base64(audio_cues: List[AudioCueWithAudioB
     final_audio = AudioSegment.silent(duration=total_duration_ms)
     for cue in audio_cues:
         # Convert base64 string to AudioSegment before overlaying
-        audio_segment = base64_to_audio(cue.audio_base64)
+        print(f"weight_db: {cue.audio_cue.weight_db}")
+        audio_segment = base64_to_audio(cue.audio_base64) * int((cue.audio_cue.weight_db + 20) / 10)
         final_audio = final_audio.overlay(audio_segment, position=cue.audio_cue.start_time_ms)
     return final_audio
 
