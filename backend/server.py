@@ -207,6 +207,8 @@ async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAu
         total_duration_ms = max(
             (c.audio_cue.start_time_ms + c.audio_cue.duration_ms) for c in audio_cues
         )
+        
+        logger.info(f"superimposed cues: {len(audio_cues)}")
 
         final_audio = superimpose_audio_cues_with_audio_base64(audio_cues, total_duration_ms)
         return GenerateAudioCuesWithAudioBase64Response(

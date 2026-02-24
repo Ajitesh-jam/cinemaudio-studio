@@ -52,6 +52,8 @@ const AudioCard = memo(({
   // Get audio data from either prop name
   const audioData = audioBase64 || audio_base64;
 
+  const isAudioLoading = !audioData;
+
   // Convert duration_ms to seconds for display
   const durationSeconds = duration_ms / 1000;
 
@@ -379,11 +381,9 @@ const AudioCard = memo(({
             />
           )
         }
-        {audioData && (
+        {audioData ? (
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-
-
             <Button
               type="button"
               variant="outline"
@@ -403,58 +403,68 @@ const AudioCard = memo(({
               )}
             </Button>
           </div>
+        ) : (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Generating audio...</span>
+          </div>
         )}
       </div>
 
       <div className="flex gap-4">
         {/* Timeline Section */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-2">
-            <TimelineRuler duration={durationSeconds} width={800} />
-            {audioData && (
-              <div className="text-xs font-mono text-muted-foreground">
-                {formatTime(currentTime)} / {formatTime(durationSeconds)}
+          {audioData ? (
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <TimelineRuler duration={durationSeconds} width={800} />
+                <div className="text-xs font-mono text-muted-foreground">
+                  {formatTime(currentTime)} / {formatTime(durationSeconds)}
+                </div>
               </div>
-            )}
-          </div>
 
-          <div className="relative mt-2" style={{ width: '100%', maxWidth: '800px' }}>
-            <Waveform
-              width={800}
-              height={80}
-              bars={50}
-              isPlaying={isPlaying}
-              highlightStart={fadeIn}
-              highlightEnd={fadeOut}
-            />
+              <div className="relative mt-2" style={{ width: '100%', maxWidth: '800px' }}>
+                <Waveform
+                  width={800}
+                  height={80}
+                  bars={50}
+                  isPlaying={isPlaying}
+                  highlightStart={fadeIn}
+                  highlightEnd={fadeOut}
+                />
 
-            {/* Playhead indicator */}
-            {audioData && (
-              <div
-                className="absolute top-0 bottom-0 w-0.5 bg-secondary shadow-[0_0_8px_hsl(var(--secondary))] z-20 pointer-events-none"
-                style={{
-                  left: `${(currentTime / durationSeconds) * 100}%`,
-                  display: isPlaying ? 'block' : 'none'
-                }}
-              />
-            )}
+                {/* Playhead indicator */}
+                <div
+                  className="absolute top-0 bottom-0 w-0.5 bg-secondary shadow-[0_0_8px_hsl(var(--secondary))] z-20 pointer-events-none"
+                  style={{
+                    left: `${(currentTime / durationSeconds) * 100}%`,
+                    display: isPlaying ? 'block' : 'none'
+                  }}
+                />
 
-            {/* Draggable Markers */}
-            <DraggableMarker
-              position={fadeIn}
-              containerWidth={800}
-              onPositionChange={handleFadeInChange}
-              label="Fade In"
-              color="primary"
-            />
-            <DraggableMarker
-              position={fadeOut}
-              containerWidth={800}
-              onPositionChange={handleFadeOutChange}
-              label="Fade Out"
-              color="secondary"
-            />
-          </div>
+                {/* Draggable Markers */}
+                <DraggableMarker
+                  position={fadeIn}
+                  containerWidth={800}
+                  onPositionChange={handleFadeInChange}
+                  label="Fade In"
+                  color="primary"
+                />
+                <DraggableMarker
+                  position={fadeOut}
+                  containerWidth={800}
+                  onPositionChange={handleFadeOutChange}
+                  label="Fade Out"
+                  color="secondary"
+                />
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-24 rounded-lg border border-dashed border-border/40 text-xs text-muted-foreground">
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <span>Generating waveform...</span>
+            </div>
+          )}
 
           {/* Curve Selectors */}
           {/* <div className="flex gap-4 mt-4">
@@ -478,12 +488,7 @@ const AudioCard = memo(({
             onChange={handleVolumeChange}
             label="VOL"
           />
-          <SpatialPanPad
-            size={100}
-            x={pan.x}
-            y={pan.y}
-            onChange={handlePanChange}
-          />
+          
         </div>
       </div>
 

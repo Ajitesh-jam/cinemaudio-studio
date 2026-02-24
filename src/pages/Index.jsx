@@ -20,14 +20,15 @@ const Index = () => {
   const [enableNarrator, setEnableNarrator] = useState(false);
   const handleDecompose = (storyText) => {
 
-    //restore the audio cues
+    // Restore the audio cues
     setAudioCues([]);
     setNarratorCues([]);
     setFinalAudio(null);
-    // INSERT_YOUR_CODE
+
     // Use relative path to leverage Vite proxy in development
     const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
     setIsLoading(true);
+
     fetch(`${apiBase}/v1/decide-cues`, {
       method: "POST",
       headers: {
@@ -89,51 +90,50 @@ const Index = () => {
         console.log("audioCueList:", audioCueList);
         console.log("narratorCueList:", narratorCueList);
 
-        // Combine all cues for the generate-audio API call
-        const allCues = [...audioCueList, ...narratorCueList];
+        // Set initial cues immediately so UI can render placeholders
+        setAudioCues(audioCueList);
+        setNarratorCues(narratorCueList);
 
-        // INSERT_YOUR_CODE
-        // Step 1: Call the /api/v1/generate-audio API on the backend
+        const totalDurationMs = data?.total_duration_ms ?? 1000;
+
+        // Simultaneous request for all cues (batch)
+        const allCues = [...audioCueList, ...narratorCueList].map((cue) => {
+          const isNarrator = cue.audio_type === "NARRATOR";
+          return isNarrator
+            ? {
+                id: cue.id,
+                audio_type: cue.audio_type,
+                start_time_ms: cue.start_time_ms,
+                duration_ms: cue.duration_ms,
+                story: cue.story,
+                narrator_description: cue.narrator_description,
+              }
+            : {
+                id: cue.id,
+                audio_class: cue.audio_class,
+                audio_type: cue.audio_type,
+                start_time_ms: cue.start_time_ms,
+                duration_ms: cue.duration_ms,
+                weight_db: cue.weight_db,
+                fade_ms: cue.fade_ms,
+              };
+        });
+
         fetch(`${apiBase}/v1/generate-audio`, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            cues: allCues.map((cue) => {
-              if (cue.audio_type === "NARRATOR") {
-                return {
-                  id: cue.id,
-                  audio_type: cue.audio_type,
-                  start_time_ms: cue.start_time_ms,
-                  duration_ms: cue.duration_ms,
-                  story: cue.story,
-                  narrator_description: cue.narrator_description
-                };
-              } else {
-                return {
-                  id: cue.id,
-                  audio_class: cue.audio_class,
-                  audio_type: cue.audio_type,
-                  start_time_ms: cue.start_time_ms,
-                  duration_ms: cue.duration_ms,
-                  weight_db: cue.weight_db,
-                  fade_ms: cue.fade_ms
-                };
-              }
-            }),
-            total_duration_ms: data?.total_duration_ms ?? 1000
-          })
+            cues: allCues,
+            total_duration_ms: totalDurationMs,
+          }),
         })
           .then(async (res) => {
             if (!res.ok) throw new Error("Failed to generate audio");
             return await res.json();
           })
           .then((audioData) => {
-            // Update cues with audio data
-            const updatedAudioCues = [...audioCueList];
-            const updatedNarratorCues = [...narratorCueList];
-
             if (audioData.audio_cues && audioData.audio_cues.length > 0) {
               audioData.audio_cues.forEach((audioCueData) => {
                 const cueId = audioCueData.audio_cue?.id;
@@ -143,59 +143,40 @@ const Index = () => {
 
                 if (audioBase64 && audioBase64 !== null && audioBase64 !== "") {
                   if (cueType === "NARRATOR") {
-                    const narratorIndex = updatedNarratorCues.findIndex(c => c.id === cueId);
-                    if (narratorIndex !== -1) {
-                      updatedNarratorCues[narratorIndex].audioBase64 = audioBase64;
-                      if (durationMs) {
-                        updatedNarratorCues[narratorIndex].duration_ms = durationMs;
-                      }
-                    }
+                    setNarratorCues((prevCues) =>
+                      prevCues.map((prevCue) =>
+                        prevCue.id === cueId
+                          ? {
+                              ...prevCue,
+                              audioBase64,
+                              duration_ms: durationMs || prevCue.duration_ms,
+                            }
+                          : prevCue
+                      )
+                    );
                   } else {
-                    const audioIndex = updatedAudioCues.findIndex(c => c.id === cueId);
-                    if (audioIndex !== -1) {
-                      updatedAudioCues[audioIndex].audioBase64 = audioBase64;
-                      if (durationMs) {
-                        updatedAudioCues[audioIndex].duration_ms = durationMs;
-                      }
-                    }
+                    setAudioCues((prevCues) =>
+                      prevCues.map((prevCue) =>
+                        prevCue.id === cueId
+                          ? {
+                              ...prevCue,
+                              audioBase64,
+                              duration_ms: durationMs || prevCue.duration_ms,
+                            }
+                          : prevCue
+                      )
+                    );
                   }
                 }
               });
             }
-
-            // Filter out cues that don't have audio before setting state
-            const cuesWithAudio = updatedAudioCues.filter(cue =>
-              cue.audioBase64 !== null &&
-              cue.audioBase64 !== undefined &&
-              cue.audioBase64 !== ""
-            );
-
-            const narratorCuesWithAudio = updatedNarratorCues.filter(cue =>
-              cue.audioBase64 !== null &&
-              cue.audioBase64 !== undefined &&
-              cue.audioBase64 !== ""
-            );
-
-            console.log("audioCues With Audio Base64:", cuesWithAudio);
-            console.log("narratorCues With Audio Base64:", narratorCuesWithAudio);
-
-            // Set both cue types
-            setAudioCues(cuesWithAudio);
-            setNarratorCues(narratorCuesWithAudio);
-
-            if (cuesWithAudio.length === 0 && narratorCuesWithAudio.length === 0) {
-              console.warn("No audio cues with audio data found");
-            }
-
-            setIsLoading(false);
           })
           .catch((err) => {
-            console.error("Error generating audio:", err);
-            // Don't set cues without audio
-            setAudioCues([]);
-            setNarratorCues([]);
-            setIsLoading(false);
+            console.error("Error generating audio for cues:", err);
           });
+
+        // Deciding cues is done; per-card loaders will reflect ongoing audio generation
+        setIsLoading(false);
       })
       .catch((err) => {
         console.error("Error fetching audio cues:", err);
@@ -221,7 +202,7 @@ const Index = () => {
         cue.id === cueId ? { ...cue, ...updates } : cue
       )
     );
-    console.log("narratorCues :", narratorCues);
+   
   };
 
   const handleEvaluationUpdate = (cueId, evaluationUpdates) => {
@@ -254,7 +235,19 @@ const Index = () => {
 
     // Combine audio cues and narrator cues for master mix
     setFinalAudio(null);
-    const audioCuePayload = audioCues.map((cue) => ({
+    const readyAudioCues = audioCues.filter(cue =>
+      cue.audioBase64 !== null &&
+      cue.audioBase64 !== undefined &&
+      cue.audioBase64 !== ""
+    );
+
+    const readyNarratorCues = narratorCues.filter(cue =>
+      cue.audioBase64 !== null &&
+      cue.audioBase64 !== undefined &&
+      cue.audioBase64 !== ""
+    );
+
+    const audioCuePayload = readyAudioCues.map((cue) => ({
       audio_cue: {
         id: cue.id,
         audio_class: cue.audio_class,
@@ -268,7 +261,7 @@ const Index = () => {
       duration_ms: cue.duration_ms
     }));
 
-    const narratorCuePayload = narratorCues.map((cue) => ({
+    const narratorCuePayload = readyNarratorCues.map((cue) => ({
       audio_cue: {
         id: cue.id,
         story: cue.story,
@@ -392,7 +385,6 @@ const Index = () => {
 
               <div className="space-y-4">
                 {narratorCues
-                  .filter(cue => cue.audioBase64 && cue.audioBase64 !== null && cue.audioBase64 !== "")
                   .map((cue, index) => (
                     <motion.div
                       key={cue.id}
@@ -443,7 +435,6 @@ const Index = () => {
 
               <div className="space-y-4">
                 {audioCues
-                  .filter(cue => cue.audioBase64 && cue.audioBase64 !== null && cue.audioBase64 !== "")
                   .map((cue, index) => (
                     <motion.div
                       key={cue.id}
