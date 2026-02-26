@@ -182,7 +182,12 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
               quality: humanScores.acousticQuality || 0,
               flow: humanScores.narrativeFlow || 0,
               impact: humanScores.cinematicImpact || 0,
+
             },
+            clapScore: autoMetrics.clapScore || 0,
+            spectralRichness: autoMetrics.spectralRichness || 0,
+            noiseFloor: autoMetrics.noiseFloor || 0,
+            audioOnsets: autoMetrics.audioOnsets || 0,
             finalScore: calculateFinalScore().toFixed(1),
             feedback: feedback || "",
             audioFile: base64Audio,
@@ -193,7 +198,7 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
           // Send to Google Apps Script which will handle:
           // 1. Uploading audio file to Google Drive folder
           // 2. Writing evaluation data to Google Sheets
-          await fetch("https://script.google.com/macros/s/AKfycbw6_DAzY9GvAmJ4cXwW1Ead0Fos7xydW-bZB50MZj1fOYzpy-ovDz55cm8HSkj3J5eJ/exec", {
+          await fetch("https://script.google.com/macros/s/AKfycbwaCqI2T56bBqOoLOrxO_zp6Yw7hiHae1BLoqRoF7HeHnVfPxPeTXR4HkzPWL5vKzXJ/exec", {
             method: "POST",
             mode: "no-cors", // Required for cross-origin GAS requests
             headers: { "Content-Type": "application/json" },
@@ -238,6 +243,8 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
       }, 500);
     }
   }, [personName, humanScores, feedback, audioBase64, storyText, calculateFinalScore]);
+
+
 
 
 

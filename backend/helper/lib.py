@@ -4,6 +4,8 @@ import threading
 from parler_tts import ParlerTTSForConditionalGeneration
 import os
 from transformers.models.auto.tokenization_auto import AutoTokenizer
+import logging
+import torch
 
 # Thread-local storage for worker IDs
 _thread_local = threading.local()
@@ -22,6 +24,44 @@ class TangoFluxModel:
     _model_pool = []  # Pool of model instances for parallel execution
     _pool_lock = threading.Lock()
     _pool_size = 0
+    _device = None  # lazily determined compute device
+
+    @classmethod
+    def _get_device(cls) -> str:
+        """Select best available device: CUDA > MPS > CPU."""
+        if cls._device is not None:
+            return cls._device
+
+        device = "cpu"
+        try:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+                device = "mps"
+        except Exception:
+            # Fallback safely to CPU if any detection error occurs
+            device = "cpu"
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"TangoFluxModel using device: {device}")
+        cls._device = device
+        return device
+
+    @classmethod
+    def _create_model(cls):
+        """Create a TangoFluxInference model on the selected device."""
+        device = cls._get_device()
+        logger = logging.getLogger(__name__)
+        try:
+            # Prefer explicit device argument if supported by TangoFluxInference
+            return TangoFluxInference(name="declare-lab/TangoFlux", device=device)
+        except TypeError:
+            # Fallback: older versions may not accept a device kwarg
+            logger.warning(
+                "TangoFluxInference does not accept 'device' kwarg; "
+                "falling back to library defaults."
+            )
+            return TangoFluxInference(name="declare-lab/TangoFlux")
 
     @classmethod
     def get_instance(cls):
@@ -29,7 +69,7 @@ class TangoFluxModel:
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = TangoFluxInference(name="declare-lab/TangoFlux")
+                    cls._instance = cls._create_model()
         return cls._instance
     
     @classmethod
@@ -38,7 +78,7 @@ class TangoFluxModel:
         with cls._pool_lock:
             # Ensure pool is large enough
             while len(cls._model_pool) <= worker_id:
-                cls._model_pool.append(TangoFluxInference(name="declare-lab/TangoFlux"))
+                cls._model_pool.append(cls._create_model())
             return cls._model_pool[worker_id]
     
     @classmethod
@@ -56,11 +96,10 @@ class TangoFluxModel:
             
             cls._pool_size = max(cls._pool_size, pool_size)
             # Pre-create models up to pool_size
-            import logging
             logger = logging.getLogger(__name__)
             logger.info(f"Initializing TangoFlux model pool: {current_size} -> {pool_size} models")
             while len(cls._model_pool) < pool_size:
-                cls._model_pool.append(TangoFluxInference(name="declare-lab/TangoFlux"))
+                cls._model_pool.append(cls._create_model())
             logger.info(f"TangoFlux model pool initialized with {len(cls._model_pool)} models")
     
     @classmethod

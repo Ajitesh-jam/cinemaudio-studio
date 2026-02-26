@@ -7,6 +7,7 @@ import FloatingParticles from "../components/FloatingParticles";
 import AnimatedLoader from "../components/ui/AnimatedLoader";
 import FinalAudioPlayer from "../components/FinalAudioPlayer";
 import EvaluationForm from "../components/EvaluationForm.jsx";
+import CustomMusicUpload from "../components/CustomMusicUpload.jsx";
 import { Button } from "../components/ui/button";
 
 
@@ -18,6 +19,7 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [finalAudio, setFinalAudio] = useState(null);
   const [enableNarrator, setEnableNarrator] = useState(false);
+  
   const handleDecompose = (storyText) => {
 
     // Restore the audio cues
@@ -196,7 +198,6 @@ const Index = () => {
   };
 
   const handleNarratorUpdate = (cueId, updates) => {
-
     setNarratorCues(prevCues =>
       prevCues.map(cue =>
         cue.id === cueId ? { ...cue, ...updates } : cue
@@ -316,6 +317,51 @@ const Index = () => {
     setShowEvaluation(true);
 
     return true;
+  };
+
+  const handleCustomMusicSave = async (personName, description, file) => {
+    console.log("handleCustomMusicSave");
+    if (!file) {
+      console.error("No audio file provided for custom music upload.");
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onloadend = async () => {
+        try {
+          const base64Audio = reader.result;
+          const payload = {
+            requestType: "CUSTOM", // Required for routing in Google Apps Script
+            personName: personName || "Anonymous",
+            description: description || "N/A",
+            audioFile: base64Audio,
+          };
+
+          console.log("Custom music payload :", payload);
+
+          await fetch("https://script.google.com/macros/s/AKfycbwaCqI2T56bBqOoLOrxO_zp6Yw7hiHae1BLoqRoF7HeHnVfPxPeTXR4HkzPWL5vKzXJ/exec", {
+            method: "POST",
+            mode: "no-cors", // Required for cross-origin GAS requests
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          resolve(true);
+        } catch (error) {
+          console.error("Error saving custom music:", error);
+          reject(error);
+        }
+      };
+
+      reader.onerror = (err) => {
+        console.error("FileReader error while reading custom music:", err);
+        reject(err);
+      };
+
+      reader.readAsDataURL(file);
+    });
   };
 
   return (
@@ -615,7 +661,10 @@ const Index = () => {
           )}
         </AnimatePresence>
 
-
+        {/* Custom Music Upload */}
+        <section className="container mx-auto px-4 pb-12">
+          <CustomMusicUpload onSave={handleCustomMusicSave} />
+        </section>
 
         {/* Footer */}
         <footer className="border-t border-border/30 py-8 mt-12">

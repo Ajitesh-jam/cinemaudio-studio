@@ -81,11 +81,15 @@ const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText}) => {
           </div>
 
           {isLoading ? (
-            <div className="mt-6">
+            <div className="mt-6 space-y-2">
               <AnimatedLoader text="DECOMPOSING NARRATIVE..." />
+              <p className="text-[11px] text-muted-foreground/80">
+                Generating individual audio cues can be slow —  <span className="font-semibold text-foreground">each cue may take up to 4–5 minutes</span>.{" "}
+                Cards will appear first, and their audio will load as it finishes.
+              </p>
             </div>
           ) : (
-            <div className="mt-6">
+            <div className="mt-6 space-y-2">
               <Button
                 onClick={handleDecompose}
                 disabled={!storyText.trim()}
@@ -94,6 +98,14 @@ const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText}) => {
                 <Wand2 className="w-4 h-4 mr-2" />
                 DECOMPOSE STORY
               </Button>
+              <p className="text-[15px] text-muted-foreground/80">
+                Note: Generating audio for <span className="font-semibold text-foreground"> each cue</span> can take up to <span className="font-semibold text-foreground">4–5 minutes.</span>{" "}
+                
+                Backend will generate cues by 2 workers in parallel and You will see all the audio once every cue generation is complete.
+                <br>
+                </br>
+                That is the generation might take upto 10-15 minutes.
+              </p>
             </div>
           )}
         </motion.div>

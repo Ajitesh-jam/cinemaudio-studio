@@ -138,7 +138,7 @@ const AudioCard = memo(({
           console.log("Specialist Model Evaluation Payload:", payload);
     
           // Send to Google Apps Script
-          await fetch("https://script.google.com/macros/s/AKfycbw6_DAzY9GvAmJ4cXwW1Ead0Fos7xydW-bZB50MZj1fOYzpy-ovDz55cm8HSkj3J5eJ/exec", {
+          await fetch("https://script.google.com/macros/s/AKfycbwaCqI2T56bBqOoLOrxO_zp6Yw7hiHae1BLoqRoF7HeHnVfPxPeTXR4HkzPWL5vKzXJ/exec", {
             method: "POST",
             mode: "no-cors", // Required for cross-origin GAS requests
             headers: { "Content-Type": "application/json" },
