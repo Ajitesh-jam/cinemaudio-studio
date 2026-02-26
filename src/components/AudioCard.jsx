@@ -49,10 +49,9 @@ const AudioCard = memo(({
   const [evaluatorName, setEvaluatorName] = useState("");
   const [cueFeedback, setCueFeedback] = useState("");
 
-  // Get audio data from either prop name
-  const audioData = audioBase64 || audio_base64;
 
-  const isAudioLoading = !audioData;
+  // Get audio data from either prop name (treat empty string as "no audio yet")
+  const audioData = audioBase64 ?? audio_base64;
 
   // Convert duration_ms to seconds for display
   const durationSeconds = duration_ms / 1000;

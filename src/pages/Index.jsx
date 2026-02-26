@@ -20,8 +20,7 @@ const Index = () => {
   const [finalAudio, setFinalAudio] = useState(null);
   const [enableNarrator, setEnableNarrator] = useState(false);
   
-  const handleDecompose = (storyText) => {
-
+  const handleDecompose = async (storyText) => {
     // Restore the audio cues
     setAudioCues([]);
     setNarratorCues([]);
@@ -31,162 +30,173 @@ const Index = () => {
     const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
     setIsLoading(true);
 
-    fetch(`${apiBase}/v1/decide-cues`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        story_text: storyText,
-        speed_wps: 2
-      })
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Failed to fetch audio cues");
-        return response.json();
-      })
-      .then((data) => {
-        const cues = data?.cues || [];
+    try {
+      // 1) Decide cues
+      const response = await fetch(`${apiBase}/v1/decide-cues`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          story_text: storyText,
+          speed_wps: 2
+        })
+      });
 
-        // Separate AudioCue and NarratorCue
-        const audioCueList = [];
-        const narratorCueList = [];
+      if (!response.ok) {
+        throw new Error("Failed to fetch audio cues");
+      }
 
-        cues.forEach((cue) => {
-          const isNarrator = cue.audio_type === "NARRATOR" || cue.story || cue.narrator_description;
+      const data = await response.json();
+      const cues = data?.cues || [];
 
-          if (isNarrator) {
-            narratorCueList.push({
+      // Separate AudioCue and NarratorCue
+      const audioCueList = [];
+      const narratorCueList = [];
+
+      cues.forEach((cue) => {
+        const isNarrator = cue.audio_type === "NARRATOR" || cue.story || cue.narrator_description;
+
+        if (isNarrator) {
+          narratorCueList.push({
+            id: cue.id,
+            story: cue.story || "",
+            narrator_description: cue.narrator_description || "",
+            audio_type: "NARRATOR",
+            start_time_ms: cue.start_time_ms || 0,
+            duration_ms: cue.duration_ms || 10,
+            audioBase64: null,
+            evaluation: {
+              promptAdherence: 0,
+              acousticNaturalness: 0,
+              recognitionRate: 0
+            }
+          });
+        } else {
+          audioCueList.push({
+            id: cue.id,
+            audio_class: cue.audio_class || "",
+            audio_type: cue.audio_type || "SFX",
+            start_time_ms: cue.start_time_ms || 0,
+            duration_ms: cue.duration_ms || 10,
+            weight_db: cue.weight_db || 0,
+            fade_ms: cue.fade_ms || 500,
+            audioBase64: null,
+            evaluation: {
+              promptAdherence: 0,
+              acousticNaturalness: 0,
+              recognitionRate: 0
+            }
+          });
+        }
+      });
+
+      console.log("audioCueList:", audioCueList);
+      console.log("narratorCueList:", narratorCueList);
+
+      // Set initial cues immediately so UI can render placeholders
+      setAudioCues(audioCueList);
+      setNarratorCues(narratorCueList);
+
+      const totalDurationMs = data?.total_duration_ms ?? 1000;
+
+      // Prepare payloads for generation
+      const allCues = [...audioCueList, ...narratorCueList].map((cue) => {
+        const isNarrator = cue.audio_type === "NARRATOR";
+        return isNarrator
+          ? {
               id: cue.id,
-              story: cue.story || "",
-              narrator_description: cue.narrator_description || "",
-              audio_type: "NARRATOR",
-              start_time_ms: cue.start_time_ms || 0,
-              duration_ms: cue.duration_ms || 10,
-              audioBase64: null,
-              evaluation: {
-                promptAdherence: 0,
-                acousticNaturalness: 0,
-                recognitionRate: 0
-              }
-            });
-          } else {
-            audioCueList.push({
+              audio_type: cue.audio_type,
+              start_time_ms: cue.start_time_ms,
+              duration_ms: cue.duration_ms,
+              story: cue.story,
+              narrator_description: cue.narrator_description,
+            }
+          : {
               id: cue.id,
-              audio_class: cue.audio_class || "",
-              audio_type: cue.audio_type || "SFX",
-              start_time_ms: cue.start_time_ms || 0,
-              duration_ms: cue.duration_ms || 10,
-              weight_db: cue.weight_db || 0,
-              fade_ms: cue.fade_ms || 500,
-              audioBase64: null,
-              evaluation: {
-                promptAdherence: 0,
-                acousticNaturalness: 0,
-                recognitionRate: 0
+              audio_class: cue.audio_class,
+              audio_type: cue.audio_type,
+              start_time_ms: cue.start_time_ms,
+              duration_ms: cue.duration_ms,
+              weight_db: cue.weight_db,
+              fade_ms: cue.fade_ms,
+            };
+      });
+
+      // 2) Generate audio sequentially in small batches (pairs).
+      // As each batch resolves, we immediately update the corresponding cues,
+      // so audio appears progressively instead of waiting for all cues.
+      const BATCH_SIZE = 2;
+
+      for (let i = 0; i < allCues.length; i += BATCH_SIZE) {
+        const batch = allCues.slice(i, i + BATCH_SIZE);
+
+        try {
+          const res = await fetch(`${apiBase}/v1/generate-audio`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              cues: batch,
+              total_duration_ms: totalDurationMs,
+            }),
+          });
+
+          if (!res.ok) {
+            throw new Error("Failed to generate audio");
+          }
+
+          const audioData = await res.json();
+
+          if (audioData.audio_cues && audioData.audio_cues.length > 0) {
+            audioData.audio_cues.forEach((audioCueData) => {
+              const cueId = audioCueData.audio_cue?.id;
+              const audioBase64 = audioCueData.audio_base64;
+              const durationMs = audioCueData.duration_ms;
+              const cueType = audioCueData.audio_cue?.audio_type;
+
+              if (audioBase64 && audioBase64 !== null && audioBase64 !== "") {
+                if (cueType === "NARRATOR") {
+                  setNarratorCues((prevCues) =>
+                    prevCues.map((prevCue) =>
+                      prevCue.id === cueId
+                        ? {
+                            ...prevCue,
+                            audioBase64,
+                            duration_ms: durationMs || prevCue.duration_ms,
+                          }
+                        : prevCue
+                    )
+                  );
+                } else {
+                  setAudioCues((prevCues) =>
+                    prevCues.map((prevCue) =>
+                      prevCue.id === cueId
+                        ? {
+                            ...prevCue,
+                            audioBase64,
+                            duration_ms: durationMs || prevCue.duration_ms,
+                          }
+                        : prevCue
+                    )
+                  );
+                }
               }
             });
           }
-        });
-
-        console.log("audioCueList:", audioCueList);
-        console.log("narratorCueList:", narratorCueList);
-
-        // Set initial cues immediately so UI can render placeholders
-        setAudioCues(audioCueList);
-        setNarratorCues(narratorCueList);
-
-        const totalDurationMs = data?.total_duration_ms ?? 1000;
-
-        // Simultaneous request for all cues (batch)
-        const allCues = [...audioCueList, ...narratorCueList].map((cue) => {
-          const isNarrator = cue.audio_type === "NARRATOR";
-          return isNarrator
-            ? {
-                id: cue.id,
-                audio_type: cue.audio_type,
-                start_time_ms: cue.start_time_ms,
-                duration_ms: cue.duration_ms,
-                story: cue.story,
-                narrator_description: cue.narrator_description,
-              }
-            : {
-                id: cue.id,
-                audio_class: cue.audio_class,
-                audio_type: cue.audio_type,
-                start_time_ms: cue.start_time_ms,
-                duration_ms: cue.duration_ms,
-                weight_db: cue.weight_db,
-                fade_ms: cue.fade_ms,
-              };
-        });
-
-        fetch(`${apiBase}/v1/generate-audio`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            cues: allCues,
-            total_duration_ms: totalDurationMs,
-          }),
-        })
-          .then(async (res) => {
-            if (!res.ok) throw new Error("Failed to generate audio");
-            return await res.json();
-          })
-          .then((audioData) => {
-            if (audioData.audio_cues && audioData.audio_cues.length > 0) {
-              audioData.audio_cues.forEach((audioCueData) => {
-                const cueId = audioCueData.audio_cue?.id;
-                const audioBase64 = audioCueData.audio_base64;
-                const durationMs = audioCueData.duration_ms;
-                const cueType = audioCueData.audio_cue?.audio_type;
-
-                if (audioBase64 && audioBase64 !== null && audioBase64 !== "") {
-                  if (cueType === "NARRATOR") {
-                    setNarratorCues((prevCues) =>
-                      prevCues.map((prevCue) =>
-                        prevCue.id === cueId
-                          ? {
-                              ...prevCue,
-                              audioBase64,
-                              duration_ms: durationMs || prevCue.duration_ms,
-                            }
-                          : prevCue
-                      )
-                    );
-                  } else {
-                    setAudioCues((prevCues) =>
-                      prevCues.map((prevCue) =>
-                        prevCue.id === cueId
-                          ? {
-                              ...prevCue,
-                              audioBase64,
-                              duration_ms: durationMs || prevCue.duration_ms,
-                            }
-                          : prevCue
-                      )
-                    );
-                  }
-                }
-              });
-            }
-          })
-          .catch((err) => {
-            console.error("Error generating audio for cues:", err);
-          });
-
-        // Deciding cues is done; per-card loaders will reflect ongoing audio generation
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        console.error("Error fetching audio cues:", err);
-        setAudioCues([]);
-        setNarratorCues([]);
-        setIsLoading(false);
-      });
-
+        } catch (batchErr) {
+          console.error("Error generating audio for cues batch:", batchErr);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching audio cues:", err);
+      setAudioCues([]);
+      setNarratorCues([]);
+    } finally {
+      // Deciding cues is done; per-card loaders will reflect ongoing audio generation
+      setIsLoading(false);
+    }
   };
 
   const handleUpdate = (cueId, updates) => {

@@ -135,6 +135,8 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
 
   }, [audioBase64, storyText]);
 
+  console.log("autoMetrics in EvaluationForm:", autoMetrics);
+
   // Calculate final score from human scores (average * 2 to get 0-10 scale)
   const calculateFinalScore = useCallback(() => {
     const avg = Object.values(humanScores).reduce((sum, val) => sum + val, 0) / Object.values(humanScores).length;
@@ -142,7 +144,7 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
   }, [humanScores]);
 
   
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (updatedAutoMetrics) => {
     if (!audioBase64) {
       alert("No audio data available to save.");
       return;
@@ -168,6 +170,9 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
       // Convert Blob to Base64 for Google Apps Script
       const reader = new FileReader();
       reader.readAsDataURL(audioBlob);
+
+
+
       
       reader.onloadend = async () => {
         try {
@@ -184,10 +189,10 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
               impact: humanScores.cinematicImpact || 0,
 
             },
-            clapScore: autoMetrics.clapScore || 0,
-            spectralRichness: autoMetrics.spectralRichness || 0,
-            noiseFloor: autoMetrics.noiseFloor || 0,
-            audioOnsets: autoMetrics.audioOnsets || 0,
+            clapScore: updatedAutoMetrics.clapScore || 0,
+            spectralRichness: updatedAutoMetrics.spectralRichness || 0,
+            noiseFloor: updatedAutoMetrics.noiseFloor || 0,
+            audioOnsets: updatedAutoMetrics.audioOnsets || 0,
             finalScore: calculateFinalScore().toFixed(1),
             feedback: feedback || "",
             audioFile: base64Audio,
@@ -465,7 +470,7 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
           </Button>
           <Button 
             size="sm" 
-            onClick={handleSave} 
+            onClick={() => handleSave(autoMetrics)} 
             disabled={isSaving}
             className={saveStatus === 'success' ? 'bg-emerald-500 hover:bg-emerald-600' : ''}
           >
