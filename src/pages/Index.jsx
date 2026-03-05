@@ -94,14 +94,17 @@ const Index = () => {
       console.log("audioCueList:", audioCueList);
       console.log("narratorCueList:", narratorCueList);
 
+      // Optionally disable narrator cues based on toggle
+      const effectiveNarratorCues = enableNarrator ? narratorCueList : [];
+
       // Set initial cues immediately so UI can render placeholders
       setAudioCues(audioCueList);
-      setNarratorCues(narratorCueList);
+      setNarratorCues(effectiveNarratorCues);
 
       const totalDurationMs = data?.total_duration_ms ?? 1000;
 
       // Prepare payloads for generation
-      const allCues = [...audioCueList, ...narratorCueList].map((cue) => {
+      const allCues = [...audioCueList, ...effectiveNarratorCues].map((cue) => {
         const isNarrator = cue.audio_type === "NARRATOR";
         return isNarrator
           ? {
@@ -415,7 +418,14 @@ const Index = () => {
         </motion.header>
 
         {/* Hero Section */}
-        <HeroSection isLoading={isLoading} onDecompose={handleDecompose} storyText={storyText} setStoryText={setStoryText} handleUpdate={handleUpdate} />
+        <HeroSection
+          isLoading={isLoading}
+          onDecompose={handleDecompose}
+          storyText={storyText}
+          setStoryText={setStoryText}
+          enableNarrator={enableNarrator}
+          setEnableNarrator={setEnableNarrator}
+        />
 
         
 

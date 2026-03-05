@@ -48,10 +48,12 @@ const AudioCard = memo(({
   const [saveEvaluationStatus, setSaveEvaluationStatus] = useState(null); // null, 'saving', 'success', 'error'
   const [evaluatorName, setEvaluatorName] = useState("");
   const [cueFeedback, setCueFeedback] = useState("");
+  const [isRegeneratingLocal, setIsRegeneratingLocal] = useState(false);
 
 
   // Get audio data from either prop name (treat empty string as "no audio yet")
   const audioData = audioBase64 ?? audio_base64;
+  const isRegeneratingEffective = isRegenerating || isRegeneratingLocal;
 
   // Convert duration_ms to seconds for display
   const durationSeconds = duration_ms / 1000;
@@ -290,42 +292,66 @@ const AudioCard = memo(({
 
   // Handle regenerate
   const handleRegenerate = async () => {
+    if (isRegeneratingEffective) return;
+
+    setIsRegeneratingLocal(true);
+
     const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
-    let endpoint = "";
-    let payload = {};
+    const isNarrator = type === "NARRATOR";
 
-    // Handle both narrator cues and regular audio cues
-    if (type === "NARRATOR") {
-      endpoint = "/v1/generate-narrator-cue";
-      payload = {
-        id: id,
-        audio_type: type,
-        story: editablePrompt, // For narrator, prompt is story
-        narrator_description: narrator_description || "",
-        start_time_ms: start_time_ms,
-        duration_ms: duration_ms
-      };
-    } else {
-      endpoint = "/v1/generate-audio-cue";
-      payload = {
-        id: id,
-        audio_type: type,
-        prompt: editablePrompt,
-        start_time_ms: start_time_ms,
-        duration_ms: duration_ms,
-        weight_db: volume,
-        fade_ms: fade_ms
-      };
+    const cuePayload = isNarrator
+      ? {
+          id,
+          audio_type: "NARRATOR",
+          start_time_ms,
+          duration_ms,
+          story: editablePrompt,
+          narrator_description: narrator_description || "",
+        }
+      : {
+          id,
+          audio_class: editablePrompt,
+          audio_type: type || "SFX",
+          start_time_ms,
+          duration_ms,
+          weight_db: volume,
+          fade_ms,
+        };
+
+    try {
+      const res = await fetch(`${apiBase}/v1/generate-audio`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          cues: [cuePayload],
+          total_duration_ms: duration_ms,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to regenerate audio");
+      }
+
+      const data = await res.json();
+      const regenerated = data?.audio_cues?.[0];
+      const newBase64 = regenerated?.audio_base64;
+      const newDurationMs = regenerated?.duration_ms;
+
+      if (newBase64) {
+        // Replace previous audio with regenerated audio
+        handleUpdate(id, {
+          audioBase64: newBase64,
+          duration_ms: newDurationMs || duration_ms,
+        });
+      }
+    } catch (err) {
+      console.error("Error regenerating audio:", err);
+    } finally {
+      setIsRegeneratingLocal(false);
     }
-
-    await fetch(`${apiBase}${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-  }
+  };
 
   const typeColors = {
     SFX: "bg-primary/20 text-primary border-primary/50",
@@ -389,9 +415,9 @@ const AudioCard = memo(({
               size="sm"
               className="ml-2 flex items-center gap-1 px-2 py-1 text-xs"
               onClick={handleRegenerate}
-              disabled={isRegenerating}
+              disabled={isRegeneratingEffective}
             >
-              {isRegenerating ? (
+              {isRegeneratingEffective ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin mr-1" /> Regenerating
                 </>

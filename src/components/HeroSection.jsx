@@ -5,7 +5,7 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import AnimatedLoader from "./ui/AnimatedLoader";
 
-const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText}) => {
+const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText, enableNarrator, setEnableNarrator}) => {
 
 
   const handleDecompose = async (e) => {
@@ -24,6 +24,12 @@ const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText}) => {
 
   const handleTextChange = (e) => {
     setStoryText(e.target.value);
+  };
+
+  const handleToggleNarrator = () => {
+    if (setEnableNarrator) {
+      setEnableNarrator((prev) => !prev);
+    }
   };
 
   return (
@@ -78,6 +84,24 @@ const HeroSection = ({ isLoading, onDecompose , storyText, setStoryText}) => {
               placeholder="Enter your narrative... e.g., 'The rain pattered against the window as thunder rolled in the distance. A car engine hummed to life, tires crunching on gravel as it pulled away into the stormy night.'"
               className="w-full min-h-[128px] bg-muted/30 text-foreground placeholder:text-muted-foreground/50 resize-none"
             />
+          </div>
+
+          <div className="mt-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-left">
+            <div className="text-[11px] text-muted-foreground/90">
+              <span className="font-semibold text-foreground">Narrator voice</span>
+              <span className="block">
+                Turn this on if you want an AI narrator reading your story along with the background soundscape.
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant={enableNarrator ? "default" : "outline"}
+              size="sm"
+              onClick={handleToggleNarrator}
+              className="px-4 py-2 text-xs font-display tracking-wider"
+            >
+              {enableNarrator ? "Narrator: ON" : "Narrator: OFF"}
+            </Button>
           </div>
 
           {isLoading ? (
