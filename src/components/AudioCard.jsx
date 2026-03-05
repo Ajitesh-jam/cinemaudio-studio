@@ -124,7 +124,7 @@ const AudioCard = memo(({
             requestType: "SPECIALIST", // Required for routing in Google Apps Script
             personName: evaluatorName || "Anonymous",
             prompt: editablePrompt,
-            cueType: type, // SFX, AMBIENCE, MUSIC, or NARRATOR
+            cueType: type, // SFX, AMBIENCE, MUSIC, or NARRATOR or MOVIE_BGM
             scores: {
               adherence: evaluationScores.promptAdherence,
               naturalness: evaluationScores.acousticNaturalness,

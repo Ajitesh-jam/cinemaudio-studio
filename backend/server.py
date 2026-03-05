@@ -164,6 +164,7 @@ async def generate_audio_from_cues_handler(request: GenerateAudioFromCuesRequest
         
         logger.info(f"Generating audio from {len(request.cues)} cues")
         cues = [dict_to_cue(c.model_dump()) for c in request.cues]
+        logger.info(f"Cues converted to dataclasses: {cues}")
         audio_cues = parallel_audio_generation(cues)
         return GenerateAudioFromCuesResponse(
             audio_cues=audio_cues,

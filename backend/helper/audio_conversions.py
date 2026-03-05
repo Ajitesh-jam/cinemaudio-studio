@@ -2,7 +2,7 @@ import base64
 import io
 from pydub import AudioSegment
 from Variable.dataclases import AudioCue, NarratorCue, Cue
-from Variable.configurations import DEFAULT_WEIGHT_DB
+from Variable.configurations import DEFAULT_WEIGHT_DB, SOUND_TYPES
 
 def dict_to_cue(d: dict) -> Cue:
     """Convert a dict (e.g. from JSON or model_dump) to AudioCue or NarratorCue."""
@@ -29,7 +29,7 @@ def dict_to_cue(d: dict) -> Cue:
     return AudioCue(
         id=sid,
         audio_class=str(d.get("audio_class") or "ambient texture"),
-        audio_type=a_type if a_type in ("SFX", "AMBIENCE", "MUSIC") else "SFX",
+        audio_type=a_type if a_type in SOUND_TYPES else "SFX",
         start_time_ms=start_ms,
         duration_ms=dur_ms,
         weight_db=float(w_db) if w_db is not None else DEFAULT_WEIGHT_DB,

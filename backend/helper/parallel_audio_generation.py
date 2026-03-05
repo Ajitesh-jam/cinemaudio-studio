@@ -23,6 +23,9 @@ def process_cue(cue: Cue, worker_id: Optional[int] = None):
         # Store worker_id in thread-local for use in generators
         if worker_id is not None:
             _thread_local.worker_id = worker_id
+            
+        logger.info(f"Processing cue: {cue}")
+        logger.info(f"Cue type: {cue.audio_type}")
         
         audio_data = create_audio_from_audiocue(cue)
         base64_data = audio_to_base64(audio_data)
@@ -47,6 +50,8 @@ def parallel_audio_generation(cues: List[Cue]):
         return []
     
     results = []
+    
+    logger.info(f"Cues in parallel_audio_generation: {cues}")
     
     if PARALLEL_EXECUTION:
         # Parallel mode: use ThreadPoolExecutor with model pool

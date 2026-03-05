@@ -59,6 +59,26 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
 
   const isFormValid = personName.trim() && Object.values(humanScores).every(v => v > 0);
 
+  // Compute which fields are missing to help the user enable the button
+  const missingFields = [];
+  if (!personName.trim()) {
+    missingFields.push("Your Name");
+  }
+
+  const scoreLabelMap = {
+    syncAccuracy: "Sync Accuracy",
+    semanticFit: "Semantic Fit",
+    acousticQuality: "Acoustic Quality",
+    narrativeFlow: "Narrative Flow",
+    cinematicImpact: "Cinematic Impact",
+  };
+
+  Object.entries(humanScores).forEach(([key, value]) => {
+    if (value <= 0 && scoreLabelMap[key]) {
+      missingFields.push(scoreLabelMap[key]);
+    }
+  });
+
   const handleSubmit = useCallback(async () => {
     if (!audioBase64) {
       alert("No audio data available for evaluation.");
@@ -135,7 +155,6 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
 
   }, [audioBase64, storyText]);
 
-  console.log("autoMetrics in EvaluationForm:", autoMetrics);
 
   // Calculate final score from human scores (average * 2 to get 0-10 scale)
   const calculateFinalScore = useCallback(() => {
@@ -348,6 +367,16 @@ const EvaluationForm = memo(({ audioBase64, storyText }) => {
             </>
           )}
         </Button>
+
+        {!isFormValid && !isLoadingMetrics && missingFields.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            To continue, please fill:{" "}
+            <span className="font-medium text-foreground">
+              {missingFields.join(", ")}
+            </span>
+            .
+          </p>
+        )}
       </motion.div>
     );
   }

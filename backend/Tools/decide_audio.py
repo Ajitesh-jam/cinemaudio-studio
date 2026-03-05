@@ -24,6 +24,7 @@ from typing import List, Dict, Tuple
 from dotenv import load_dotenv
 import google.genai as genai
 import spacy
+from Variable.configurations import PATH_TO_MOVIE_BGM_METADATA, SOUND_TYPES
 try:
     nlp = spacy.load("en_core_web_sm")
     nlp_available = True
@@ -341,6 +342,11 @@ def extract_local_entities(text: str):
         logger.warning(f"GLiNER extraction failed: {e}")
         return []
 
+def read_movie_bgms_csv():
+    """Read the movie bgms csv file."""
+    with open(PATH_TO_MOVIE_BGM_METADATA, "r") as f:
+        return f.read()
+
 def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = True):
     # if not GEMINI_AVAILABLE:
     #     logger.warning("Gemini API not available")
@@ -354,8 +360,9 @@ def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = Tru
         prompt = None
         if narrator_enabled:
             try:
+                movie_bgms_csv = read_movie_bgms_csv()
                 # Use format_prompt() for langchain PromptTemplate, then convert to string
-                prompt_value = gemini_audio_prompt_with_narrator.format_prompt(story_text=story_text, speed_wps=speed_wps)
+                prompt_value = gemini_audio_prompt_with_narrator.format_prompt(story_text=story_text, speed_wps=speed_wps, movie_bgms_csv=movie_bgms_csv)
                 prompt = prompt_value.to_string()
             except Exception as e:
                 logger.error(f"Error formatting prompt: {e}", exc_info=True)
@@ -490,7 +497,7 @@ def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool =
 
     for item in gemini_cues:
         a_type = str(item.get("audio_type", "SFX")).upper()
-        if a_type not in ["SFX", "AMBIENCE", "MUSIC", "NARRATOR"]:
+        if a_type not in SOUND_TYPES:
             a_type = "SFX"
 
         # Use LLM-provided timing if available, otherwise calculate from word_index
@@ -514,6 +521,8 @@ def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool =
                 duration_ms = max(1000, total_duration_ms - start_ms)
             elif a_type == "NARRATOR":
                 duration_ms = max(1000, total_duration_ms - start_ms)
+            elif a_type == "MOVIE_BGM":
+                duration_ms = 10000
             else:  # MUSIC
                 duration_ms = 5000
         else:
@@ -566,6 +575,7 @@ def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool =
         )
 
         final_cues.append(cue)
+        logger.info(f"Added cue: {cue}")
         index += 1
 
     logger.info(f"[DECIDER] Successfully generated {len(final_cues)} cinematic cues with LLM-provided timing.")
@@ -604,9 +614,9 @@ def decide_audio_cues(story_text: str, speed_wps: float):
     logger.info(f"Total Duration: {total_duration}")
     return cues, total_duration
 
-if __name__ == "__main__":
-    story_text = "Suddenly rain started so i ran to shelter where i heard loud dog barking"
-    speed_wps = 100
-    cues, total_duration = decide_audio_cues(story_text, speed_wps)
-    print(cues)
-    print(total_duration)
+# if __name__ == "__main__":
+#     story_text = "Suddenly rain started so i ran to shelter where i heard loud dog barking"
+#     speed_wps = 100
+#     cues, total_duration = decide_audio_cues(story_text, speed_wps)
+#     print(cues)
+#     print(total_duration)

@@ -1,4 +1,5 @@
 from headers.imports import Dict, Tuple
+import os
 
 # --- Reading Speed Configuration ---
 READING_SPEED_WPS = 2.0  # Words Per Second
@@ -45,3 +46,10 @@ ENV_GAIN=0.7
     
 EMOTIONAL_RATE=44100
 EMOTIONAL_GAIN=0.8
+
+
+PATH_TO_MOVIE_BGMS = "data/movie_bgms"
+PATH_TO_MOVIE_BGM_METADATA = "data/metadata/movie_bgms.csv"
+
+
+SOUND_TYPES = ["SFX", "AMBIENCE", "MUSIC", "NARRATOR","MOVIE_BGM"]

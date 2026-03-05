@@ -7,3 +7,4 @@ Debugs/*
 __pycache__/
 *.wav
 Test/*
+data/*

@@ -23,10 +23,10 @@ process.env.PYTHONUNBUFFERED = "1"; // Ensure Python output is unbuffered
 console.log("Starting FastAPI backend server...");
 console.log(`Backend directory: ${backendDir}`);
 console.log(
-  `Server will be available at http://${process.env.HOST}:${process.env.PORT}`
+  `Server will be available at http://${process.env.HOST}:${process.env.PORT}`,
 );
 console.log(
-  `API Documentation: http://${process.env.HOST}:${process.env.PORT}/docs\n`
+  `API Documentation: http://${process.env.HOST}:${process.env.PORT}/docs\n`,
 );
 
 // Check if conda environment is specified
@@ -66,11 +66,11 @@ backendProcess.on("error", (error) => {
   console.error("\nMake sure Python and uvicorn are installed.");
   if (condaEnv) {
     console.error(
-      `   Or activate your conda environment first: conda activate ${condaEnv}`
+      `   Or activate your conda environment first: conda activate ${condaEnv}`,
     );
   }
   console.error(
-    "   Install dependencies: pip install -r src/backend/requirements.txt"
+    "   Install dependencies: pip install -r src/backend/requirements.txt",
   );
   process.exit(1);
 });
@@ -85,8 +85,28 @@ backendProcess.on("exit", (code) => {
 // Handle graceful shutdown
 process.on("SIGINT", () => {
   console.log("\nShutting down backend server...");
+
+  // Try graceful shutdown: send SIGINT, wait for process to exit
   backendProcess.kill("SIGINT");
-  process.exit(0);
+
+  // Give backend some time to shut down gracefully
+  const timeout = setTimeout(() => {
+    if (!backendProcess.killed) {
+      console.warn(
+        "Backend server did not shut down in time, force killing...",
+      );
+      backendProcess.kill("SIGKILL"); // Force kill
+    }
+    // As a last resort, exit anyway
+    process.exit(0);
+  }, 5000);
+
+  backendProcess.on("exit", () => {
+    clearTimeout(timeout);
+    console.log("Backend server exited. Cleaning up...");
+    // Any additional cleanup (close open handles, etc) can be done here
+    process.exit(0);
+  });
 });
 
 process.on("SIGTERM", () => {
