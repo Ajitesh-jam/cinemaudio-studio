@@ -6,8 +6,19 @@ from models import AudioDiffusion, DDPMScheduler
 from audioldm.audio.stft import TacotronSTFT
 from audioldm.variational_autoencoder import AutoencoderKL
 
+
+def _get_device(device=None):
+    """Use CUDA if available, else MPS (Apple Silicon), else CPU."""
+    if device is not None:
+        return device
+    if torch.cuda.is_available():
+        return "cuda:0"
+    return "cpu"
+
+
 class Tango:
-    def __init__(self, name="declare-lab/tango", device="cuda:0"):
+    def __init__(self, name="declare-lab/tango", device=None):
+        device = _get_device(device)
         
         path = snapshot_download(repo_id=name)
         
@@ -27,7 +38,8 @@ class Tango:
         self.stft.load_state_dict(stft_weights)
         self.model.load_state_dict(main_weights)
 
-        print ("Successfully loaded checkpoint from:", name)
+        print("Successfully loaded checkpoint from:", name)
+        print("Using device:", device)
         
         self.vae.eval()
         self.stft.eval()
