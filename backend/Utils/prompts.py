@@ -127,6 +127,8 @@ weight_db: volume adjustment (-15.0 to 6.0). 6.0 = "Defeaning/Loud".
 Try to keep the duration_ms as close to the original movie bgm duration as possible.
 Also if you choose a movie bgm from the data, you must force the audio_type to be "MOVIE_BGM" and you need to turn off the Music cue by model, ie at a time either you have movie bgm or music cue, not both.
 
+### IMPORTANT: Its not at all necessary to have movie bgm in the story. If you feel it is not necessary, you can skip it.###
+
 ### 5. OUTPUT CONSTRAINTS
 
 JSON ONLY: No conversational filler.

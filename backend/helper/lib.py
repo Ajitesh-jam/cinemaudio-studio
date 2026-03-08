@@ -6,6 +6,10 @@ import os
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 import logging
 import torch
+from elevenlabs.client import ElevenLabs
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # Thread-local storage for worker IDs
 _thread_local = threading.local()
@@ -166,3 +170,29 @@ class ParlerTTSModel:
                         "description_tokenizer": description_tokenizer,
                     }
         return cls._instance
+    
+    
+
+class ElevenLabsModel:
+    _instance = None
+    # _lock = threading.Lock()
+    # @classmethod
+    # def get_instance(cls):
+    #     if cls._instance is None:
+    #         with cls._lock:
+    #             if cls._instance is None:
+    #                 print(f"Initializing ElevenLabs client with api key: {os.getenv('ELEVEN_LABS_KEY')}")
+    #                 cls._instance = ElevenLabs(
+    #                     api_key=os.getenv("ELEVEN_LABS_KEY"),
+    #                 )
+    #         return cls._instance
+    #     return cls._instance
+        
+    @classmethod
+    def generate(cls, prompt: str):
+        elevenlabs = ElevenLabs(
+                        api_key=os.getenv("ELEVEN_LABS_KEY"),
+                    )
+        audio = elevenlabs.text_to_sound_effects.convert(text=prompt)
+        return audio
+    

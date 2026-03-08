@@ -38,3 +38,5 @@ python-dotenv>=1.0.0
 
 # Utilities
 requests>=2.31.0
+
+elevenlabs>= 2.38.0
