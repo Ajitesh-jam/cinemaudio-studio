@@ -24,8 +24,9 @@ import numpy as np
 import soundfile as sf
 import os
 import tempfile
-from base_sound_model import SoundEffectsModel
+from model.base_sound_model import SoundEffectsModel
 from Variable.configurations import SFX_RATE
+from tango_new.tango2.tango import Tango
 logger = logging.getLogger(__name__)
 
 # Thread-local storage used to track worker_id per thread in parallel generation
@@ -49,7 +50,7 @@ class Tango2Model(SoundEffectsModel):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    from tango_new.tango2.tango import Tango
+                    
                     cls._instance = Tango(name="declare-lab/tango")
         return cls._instance
 

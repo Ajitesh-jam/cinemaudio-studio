@@ -10,19 +10,19 @@
 # print("Project root added to sys.path:", project_root)
 
 from csv import Error
-import base64
-import io
 from operator import and_
 from pydub import AudioSegment
 import logging
 from typing import List, Sequence
 from Variable.dataclases import Cue, AudioCueWithAudioBase64, AudioCue
 from Tools.play_audio import create_audio_from_audiocue
+from helper.parallel_audio_generation import parallel_audio_generation
 from Tools.decide_audio import decide_audio_cues
 from Variable.configurations import READING_SPEED_WPS
-from helper.audio_conversions import base64_to_audio
+from helper.audio_conversions import base64_to_audio, audio_to_base64
 from Utils.prompts import prompt_to_fill_missing_audio_cues
 from Utils.llm import query_llm
+
 # from Variable.audio_classes_dict import SOUND_KEYWORDS
 
 
@@ -74,8 +74,9 @@ class SuperimpositionModel:
             response = query_llm(llm_name="gemini", model_name="gemini-2.5-flash", prompt=prompt)
             if response:
                 not_covered_audio_cues = response.get("audio_cues", [])
-                
-        return not_covered_audio_cues    
+        
+        logger.info(f"Not covered audio cues: {not_covered_audio_cues}")        
+        return not_covered_audio_cues
     
     def superimposition_model(self, story_text: str, speed_wps: float):
         """
@@ -95,6 +96,7 @@ class SuperimpositionModel:
         """
         logger.info("Starting audio superimposition process...")
         logger.info(f"Creating silent audio canvas of {total_duration_ms}ms.")
+                
         final_audio = AudioSegment.silent(duration=total_duration_ms)
         for cue in audio_cues:
             # Convert base64 string to AudioSegment before overlaying

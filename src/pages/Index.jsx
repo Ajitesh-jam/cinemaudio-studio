@@ -18,7 +18,8 @@ const Index = () => {
   const [showEvaluation, setShowEvaluation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [finalAudio, setFinalAudio] = useState(null);
-  const [enableNarrator, setEnableNarrator] = useState(false);
+  const [missingCues, setMissingCues] = useState([]);
+  const [enableNarrator, setEnableNarrator] = useState(true);
   
   const handleDecompose = async (storyText) => {
     // Restore the audio cues
@@ -129,7 +130,7 @@ const Index = () => {
       // 2) Generate audio sequentially in small batches (pairs).
       // As each batch resolves, we immediately update the corresponding cues,
       // so audio appears progressively instead of waiting for all cues.
-      const BATCH_SIZE = 5;
+      const BATCH_SIZE = 10;
 
       for (let i = 0; i < allCues.length; i += BATCH_SIZE) {
         const batch = allCues.slice(i, i + BATCH_SIZE);
@@ -246,15 +247,16 @@ const Index = () => {
   };
 
   const handleMasterMix = () => {
-
-    // Combine audio cues and narrator cues for master mix
     setFinalAudio(null);
+    setMissingCues([]);
+    setIsLoading(true);
+    setShowEvaluation(true);
+
     const readyAudioCues = audioCues.filter(cue =>
       cue.audioBase64 !== null &&
       cue.audioBase64 !== undefined &&
       cue.audioBase64 !== ""
     );
-
     const readyNarratorCues = narratorCues.filter(cue =>
       cue.audioBase64 !== null &&
       cue.audioBase64 !== undefined &&
@@ -274,7 +276,6 @@ const Index = () => {
       audio_base64: cue.audioBase64,
       duration_ms: cue.duration_ms
     }));
-
     const narratorCuePayload = readyNarratorCues.map((cue) => ({
       audio_cue: {
         id: cue.id,
@@ -288,46 +289,48 @@ const Index = () => {
       audio_base64: cue.audioBase64,
       duration_ms: cue.duration_ms
     }));
-
     const cues = [...audioCuePayload, ...narratorCuePayload];
-    console.log("cues :", cues);
     const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
-    console.log("storyText :", storyText);
+    const payload = { cues, story_text: storyText, speed_wps: 2 };
+
+    // Phase 1: check missing cues so we can show them in loading state
+    fetch(`${apiBase}/v1/check-missing-audio-cues`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then((res) => (res.ok ? res.json() : Promise.resolve({ missing_cues: [] })))
+      .then((data) => {
+        setMissingCues(data.missing_cues || []);
+      })
+      .catch(() => setMissingCues([]));
+
+    // Phase 2: generate final audio
     fetch(`${apiBase}/v1/generate-audio-cues-with-audio-base64`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        cues: cues,
-        story_text: storyText,
-        speed_wps: 2
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("Failed to generate audio");
         return response.json();
       })
       .then((data) => {
-        console.log("data :", data);
-        // Calculate duration from cues (max of start_time_ms + duration_ms)
         const totalDurationMs = Math.max(
           ...cues.map(cue => cue.audio_cue.start_time_ms + cue.audio_cue.duration_ms),
           0
         );
-        const durationSeconds = totalDurationMs / 1000;
-
-        // Store as object with audioBase64 and duration for FinalAudioPlayer
         setFinalAudio({
           audioBase64: data.audio_base64 || null,
-          duration: durationSeconds
+          duration: totalDurationMs / 1000
         });
+        setMissingCues([]);
       })
       .catch((err) => {
         console.error("Error generating audio:", err);
+        setMissingCues([]);
       })
       .finally(() => setIsLoading(false));
-    setShowEvaluation(true);
 
     return true;
   };
@@ -549,6 +552,33 @@ const Index = () => {
           )}
         </AnimatePresence>
 
+
+        {/* Missing cues loading state: show which cues are being generated */}
+        <AnimatePresence>
+          {isLoading && missingCues.length > 0 && (
+            <motion.section
+              className="container mx-auto px-4 pb-6"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+            >
+              <div className="glass-panel p-6 rounded-xl border border-amber-500/30 bg-amber-950/20 backdrop-blur-md">
+                <h3 className="text-sm font-display font-semibold text-amber-200 mb-3 flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                  Generating audio for missing cues
+                </h3>
+                <ul className="space-y-1.5 text-sm text-muted-foreground">
+                  {missingCues.map((cue, i) => (
+                    <li key={cue.id ?? i} className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      {cue.audio_class ?? cue.story?.slice(0, 40) ?? `Cue ${cue.id ?? i + 1}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {/* Final Audio & Evaluation */}
         <AnimatePresence>

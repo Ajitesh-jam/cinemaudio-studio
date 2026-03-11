@@ -67,27 +67,33 @@ Action/Urgency: Faster pace, higher intensity, clear and sharp articulation.
 
 Serene/Nature: Calm, moderate pace, smooth intonation with subtle warmth.
 
-Reference Examples for Narrator:
-Aditi - Slightly High-Pitched, Expressive Tone: "Aditi speaks with a slightly higher pitch in a close-sounding environment. Her voice is clear, with subtle emotional depth and a normal pace, all captured in high-quality recording."
 
-- Sita - Rapid, Slightly Monotone: "Sita speaks at a fast pace with a slightly low-pitched voice, captured clearly in a close-sounding environment with excellent recording quality."
+### 1. NARRATOR DESCRIPTION You must provide a "Narrator_Style" description that tells the AI exactly how to perform the reading based on the story's genre, mood, and tension.
 
-- Tapan - Male, Moderate Pace, Slightly Monotone: "Tapan speaks at a moderate pace with a slightly monotone tone. The recording is clear, with a close sound and only minimal ambient noise."
+include the term "very clear audio" to generate the highest quality audio, and "very noisy audio" for high levels of background noise
+Punctuation can be used to control the prosody of the generations, e.g. use commas to add small breaks in speech
+The remaining speech features (gender, speaking rate, pitch and reverberation)
 
-- Sunita - High-Pitched, Happy Tone: "Sunita speaks with a high pitch in a close environment. Her voice is clear, with slight dynamic changes, and the recording is of excellent quality."
+Mini Model - Top 20 Speakers
+Speaker	Similarity Score
+Jon	0.908301
+Lea	0.904785
+Gary	0.903516
+Jenna	0.901807
+Mike	0.885742
+Laura	0.882666
+Lauren	0.878320
+Eileen	0.875635
+Alisa	0.874219
+Karen	0.872363
+Barbara	0.871509
+Carol	0.863623
+Emily	0.854932
+Rose	0.852246
+Will	0.851074
 
-- Karan - High-Pitched, Positive Tone: "Karan's high-pitched, engaging voice is captured in a clear, close-sounding recording. His slightly slower delivery conveys a positive tone."
+add description like "A male speaker with a monotone and high-pitched voice is delivering his speech at a really low speed in a confined environment." or "A female speaker with a high-pitched voice is delivering her speech at a really fast speed in a noisy environment." or "Jon speaks with a low-pitched voice is delivering his speech at a really slow speed in a quiet environment." or "Lea speaker with a low-pitched voice is delivering her speech at a really fast speed in a noisy environment."
 
-- Amrita - High-Pitched, Flat Tone: "Amrita speaks with a high pitch at a slow pace. Her voice is clear, with excellent recording quality and only moderate background noise."
-
-- Aditi - Slow, Slightly Expressive: "Aditi speaks slowly with a high pitch and expressive tone. The recording is clear, showcasing her energetic and emotive voice."
-
-- Young Male Speaker, American Accent: "A young male speaker with a high-pitched American accent delivers speech at a slightly fast pace in a clear, close-sounding recording."
-
-- Bikram - High-Pitched, Urgent Tone: "Bikram speaks with a higher pitch and fast pace, conveying urgency. The recording is clear and intimate, with great emotional depth."
-
-- Anjali - High-Pitched, Neutral Tone: "Anjali speaks with a high pitch at a normal pace in a clear, close-sounding environment. Her neutral tone is captured with excellent audio quality."
-Narrator Description Goal: Describe the emotion, pitch, and pace required for the specific story context.
 
 ### 2. AUDIO CUE ENGINEERING You must identify any number of critical audio cues that ground the story in a professional soundscape.
 
@@ -133,7 +139,7 @@ Also if you choose a movie bgm from the data, you must force the audio_type to b
 
 JSON ONLY: No conversational filler.
 
-Cue Count: Keep as less as possible.
+Keep as many audio cues as you want to cover full story into audio. Focus on story context try to find audio sources, what music or sfx should be included in the story.
 
 Narrator Object: Include a single narrator_description at the root.
 
@@ -156,7 +162,7 @@ JSON
         "duration_ms": duration_ms,
     }},
      {{
-      "audio_class": "Heroic type of soundtrack maxing aura of someone ",
+      "audio_class": "Audio file path of the audio cue",
       "audio_type": "MOVIE_BGM", # FORCE TO BE MOVIE_BGM if you take movie bgm from the data
       "word_index": 15,
       "start_time_ms": 10000,
@@ -256,7 +262,7 @@ Also if you choose a movie bgm from the data, you must force the audio_type to b
 
 JSON ONLY: No conversational filler.
 
-Cue Count: Keep as less as possible.
+Keep as many audio cues as you want to cover full story into audio. Focus on story context try to find audio sources, what music or sfx should be included in the story.
 
 Narrator Object: Include a single narrator_description at the root.
 
@@ -267,9 +273,20 @@ JSON
 {{
 
   "audio_cues": [
+    {{
+        "story": " The part of the story that the narrator will read with given descrpition , make sure to include pauses and breaks as per the narrator description
+        
+        # you might break story into multiple parts and make seprate audio cues for each part
+        ", 
+        "narrator_description": "male speaker with a monotone and high-pitched voice is delivering his speech at a really low speed in a confined environment.",
+        ##### audio que for narrator to know how to read the story
+        "audio_type": "NARRATOR",
+        "start_time_ms": 0,
+        "duration_ms": duration_ms,
+    }},
     
      {{
-      "audio_class": "Heroic type of soundtrack maxing aura of someone ",
+      "audio_class": "",
       "audio_type": "MOVIE_BGM", # FORCE TO BE MOVIE_BGM if you take movie bgm from the data
       "word_index": 15,
       "start_time_ms": 10000,
@@ -285,7 +302,7 @@ JSON
       "weight_db": 2.0
     }},
     {{
-      "audio_class": "Heavy rain hitting glass window with distant thunder rumbles",
+      "audio_class": "Audio file path of the audio cue",
       "audio_type": "AMBIENCE",
       "word_index": 4,
       "start_time_ms": 2000,

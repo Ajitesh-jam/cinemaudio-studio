@@ -1,7 +1,7 @@
 import threading
 import logging
 import os
-from base_sound_model import SoundEffectsModel
+from model.base_sound_model import SoundEffectsModel
 logger = logging.getLogger(__name__)
 
 

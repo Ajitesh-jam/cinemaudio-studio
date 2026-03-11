@@ -1,13 +1,6 @@
 from typing import Optional, Type, List, Tuple
-import concurrent.futures
 import threading
-import os
 import logging
-import tempfile
-
-import numpy as np
-import soundfile as sf
-import torch
 from dotenv import load_dotenv
 from Variable.configurations import (
     TANGO_FLUX,
@@ -22,10 +15,6 @@ load_dotenv()
 from model.tangoflux_model import TangoFluxModel
 from model.elevenlabs_model import ElevenLabsModel
 from model.tango2_model import Tango2Model
-from superimposition_model.superimposition_model import SuperimpositionModel
-from model.tangoflux_model import TangoFluxModel
-# from model.elevenlabs_model import ElevenLabsModel
-from model.tango2_model import Tango2Model
 from model.parlerTTSModel import ParlerTTSModel
 # Thread-local storage for worker IDs
 _thread_local = threading.local()
@@ -35,7 +24,8 @@ logger = logging.getLogger(__name__)
 parler_tts_model_ins = ParlerTTSModel()
 tango2_model_ins = Tango2Model()
 tango_flux_model_ins = TangoFluxModel()
-superimposition_model_ins = SuperimpositionModel()
+is_initialized = False
+
 
 # Private dictionary to hold our preloaded model instances
 _model_registry = {}
@@ -77,10 +67,13 @@ def init_models():
     _model_registry["parlertts"] = parler_tts_model_ins
     _model_registry["tango2"] = tango2_model_ins
     _model_registry["tangoflux"] = tango_flux_model_ins
-    _model_registry["superimposition"] = superimposition_model_ins
+
+    global is_initialized
+    is_initialized = True
     # _model_registry["elevenlabs"] = eleven_labs_model_ins
     
-    print("All models successfully loaded!")
+    logger.info("All models successfully loaded!")
+    return
 
 def get_model(model_name: str):
     """Return the model class for the given model name.
@@ -95,7 +88,8 @@ def get_model(model_name: str):
         model_cls = get_model("Tango2")
         audio = model_cls.generate(prompt, steps=100, duration=5)
     """
-    
+    if not is_initialized:
+        init_models()
     logger.info(f"Getting model: {model_name.strip().lower()}")
     logger.info(f"Model registry: {_model_registry[model_name.strip().lower()]}")
     return _model_registry[model_name.strip().lower()]

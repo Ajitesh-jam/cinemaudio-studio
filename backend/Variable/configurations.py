@@ -64,3 +64,8 @@ TANGO2 = "Tango2"
 SFX_MODEL = TANGO2
 ENV_MODEL = TANGO2
 MUSIC_MODEL = TANGO2
+
+
+class ModelConfig:
+    def __init__(self):
+       self.fill_coverage_by_llm = True

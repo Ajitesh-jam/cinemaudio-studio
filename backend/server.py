@@ -24,6 +24,9 @@ if project_root not in sys.path:
 cinema_studio_root = os.path.abspath(os.path.join(project_root, "."))
 if cinema_studio_root not in sys.path:
     sys.path.append(cinema_studio_root)    
+    
+from Variable.configurations import ModelConfig
+model_config = ModelConfig()
 
 # Import project-specific modules
 from Variable.dataclases import (
@@ -38,18 +41,19 @@ from Variable.dataclases import (
     GenerateAudioFromCuesRequest,
     GenerateAudioFromCuesResponse,
     GenerateAudioCuesWithAudioBase64Request,
-    GenerateAudioCuesWithAudioBase64Response
+    GenerateAudioCuesWithAudioBase64Response,
+    CheckMissingCuesResponse,
 )
-from helper.audio_conversions import dict_to_cue
-
+from helper.audio_conversions import dict_to_cue, audio_cue_to_dict
+from superimposition_model.superimposition_model import SuperimpositionModel
 from Variable.configurations import READING_SPEED_WPS, PARALLEL_EXECUTION, PARALLEL_WORKERS
 from Tools.decide_audio import decide_audio_cues
-from superimposition_model.superimposition_model import SuperimpositionModel
 from Evaluation.evaluator import AudioEvaluator
 from helper.audio_conversions import audio_to_base64
 from helper.parallel_audio_generation import parallel_audio_generation
 
-from helper.lib import init_models , superimposition_model_ins
+from helper.lib import init_models 
+superimposition_model_ins = SuperimpositionModel()
 # Configure logging to explicitly output to stdout/stderr with colored output
 
 class ColorFormatter(logging.Formatter):
@@ -184,6 +188,61 @@ async def generate_audio_from_cues_handler(request: GenerateAudioFromCuesRequest
             detail=f"Error generating audio: {str(e)}"
         )
 
+def _request_to_audio_cues(request: GenerateAudioCuesWithAudioBase64Request):
+    """Build list of AudioCueWithAudioBase64 from request and compute total_duration_ms."""
+    audio_cues = []
+    for cue in request.cues:
+        raw = cue.audio_cue
+        if hasattr(raw, "__dataclass_fields__"):
+            resolved: Cue = raw  # type: ignore[assignment]
+        else:
+            if hasattr(raw, "model_dump"):
+                d = raw.model_dump()  # type: ignore[union-attr]
+            elif hasattr(raw, "keys"):
+                d = dict(raw)  # type: ignore[arg-type]
+            else:
+                d = {f: getattr(raw, f, None) for f in ("id", "audio_type", "start_time_ms", "duration_ms", "audio_class", "weight_db", "fade_ms", "story", "narrator_description")}
+            resolved = dict_to_cue(d)
+        audio_cues.append(
+            AudioCueWithAudioBase64(
+                audio_cue=resolved,
+                audio_base64=cue.audio_base64,
+                duration_ms=cue.duration_ms
+            )
+        )
+    total_duration_ms = max(
+        (c.audio_cue.start_time_ms + c.audio_cue.duration_ms) for c in audio_cues
+    ) if audio_cues else 0
+    return audio_cues, total_duration_ms
+
+
+@app.post("/api/v1/check-missing-audio-cues", response_model=CheckMissingCuesResponse)
+async def check_missing_audio_cues(request: GenerateAudioCuesWithAudioBase64Request):
+    """
+    Check which cues are not covered by the story (LLM). Returns missing cues so the frontend
+    can show them in a loading state before calling generate-audio-cues-with-audio-base64.
+    """
+    try:
+        audio_cues, total_duration_ms = _request_to_audio_cues(request)
+        if not audio_cues:
+            return CheckMissingCuesResponse(missing_cues=[], total_duration_ms=0)
+        not_covered_classes = superimposition_model_ins.check_missing_audio_cues(
+            request.story_text, audio_cues, total_duration_ms
+        )
+        missing_cues = [
+            audio_cue_to_dict(c.audio_cue)
+            for c in audio_cues
+            if getattr(c.audio_cue, "audio_class", None) in not_covered_classes
+        ]
+        return CheckMissingCuesResponse(missing_cues=missing_cues, total_duration_ms=total_duration_ms)
+    except Exception as e:
+        logger.error(f"Error checking missing audio cues: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 @app.post("/api/v1/generate-audio-cues-with-audio-base64", response_model=GenerateAudioCuesWithAudioBase64Response)
 async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAudioBase64Request):
     """
@@ -191,33 +250,25 @@ async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAu
     """
     try:
         logger.info(f"Generating audio cues with audio base64 from story: {request.story_text[:50]}...")
-        audio_cues = []
-        for cue in request.cues:
-            raw = cue.audio_cue
-            if hasattr(raw, "__dataclass_fields__"):
-                resolved: Cue = raw  # type: ignore[assignment]
-            else:
-                if hasattr(raw, "model_dump"):
-                    d = raw.model_dump()  # type: ignore[union-attr]
-                elif hasattr(raw, "keys"):
-                    d = dict(raw)  # type: ignore[arg-type]
-                else:
-                    d = {f: getattr(raw, f, None) for f in ("id", "audio_type", "start_time_ms", "duration_ms", "audio_class", "weight_db", "fade_ms", "story", "narrator_description")}
-                resolved = dict_to_cue(d)
-            audio_cues.append(
-                AudioCueWithAudioBase64(
-                    audio_cue=resolved,
-                    audio_base64=cue.audio_base64,
-                    duration_ms=cue.duration_ms
-                )
-            )
-        total_duration_ms = max(
-            (c.audio_cue.start_time_ms + c.audio_cue.duration_ms) for c in audio_cues
-        )
-        
+        audio_cues, total_duration_ms = _request_to_audio_cues(request)
         logger.info(f"superimposed cues: {len(audio_cues)}")
 
-        final_audio = superimposition_model_ins.superimpose_audio_cues_with_audio_base64(request.story_text, audio_cues, total_duration_ms)
+        if model_config.fill_coverage_by_llm and audio_cues:
+            not_covered_classes = superimposition_model_ins.check_missing_audio_cues(
+                request.story_text, audio_cues, total_duration_ms
+            )
+            if not_covered_classes:
+                logger.info(f"Not covered audio cues: {not_covered_classes}")
+                missing_cue_objects = [
+                    c.audio_cue for c in audio_cues
+                    if getattr(c.audio_cue, "audio_class", None) in not_covered_classes
+                ]
+                generated_missing = parallel_audio_generation(missing_cue_objects)
+                audio_cues.extend(generated_missing)
+
+        final_audio = superimposition_model_ins.superimpose_audio_cues_with_audio_base64(
+            request.story_text, audio_cues, total_duration_ms
+        )
         return GenerateAudioCuesWithAudioBase64Response(
             audio_base64=audio_to_base64(final_audio),
             message="Successfully generated audio cues with audio base64",

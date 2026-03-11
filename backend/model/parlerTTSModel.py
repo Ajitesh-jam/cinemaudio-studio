@@ -2,9 +2,10 @@ import threading
 import logging
 import os
 from typing import cast
-
+import numpy as np
+from pydub import AudioSegment
 import torch
-from base_sound_model import SoundEffectsModel
+from model.base_sound_model import SoundEffectsModel
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 from parler_tts import ParlerTTSForConditionalGeneration
 
@@ -20,6 +21,8 @@ class ParlerTTSModel(SoundEffectsModel):
         self.model = None
         self.tokenizer = None
         self.description_tokenizer = None
+        
+    
 
     @classmethod
     def get_instance(cls):
@@ -49,15 +52,37 @@ class ParlerTTSModel(SoundEffectsModel):
                     cls._instance = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_mini_v0.1")
                     cls._instance.tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_mini_v0.1")
                     return cls._instance
+
     @classmethod
-    def generate(cls, prompt: str, description: str) -> torch.Tensor:
+    def _tts_output_to_audio_segment(cls, raw):
+        if cls._instance is None:
+            cls.get_instance()
+        sample_rate = cls._instance.config.sampling_rate or 44100
+        """Convert TTS output (torch.Tensor or np.ndarray, float32) to AudioSegment."""
+        if hasattr(raw, "cpu"):
+            raw = raw.cpu().numpy().squeeze()
+        audio_arr = np.asarray(raw, dtype=np.float32)
+        audio_arr = np.clip(audio_arr, -1.0, 1.0)
+        gain = 0.9
+        audio_bytes = (audio_arr * 32767 * gain).astype(np.int16).tobytes()
+        seg = AudioSegment(
+            data=audio_bytes,
+            sample_width=2,
+            frame_rate=sample_rate,
+            channels=1,
+        )
+        return seg 
+    
+    
+    @classmethod
+    def generate(cls, prompt: str, description: str):
         if cls._instance is None or cls._instance.tokenizer is None:
             cls.get_instance()
         input_ids = cls._instance.tokenizer(description, return_tensors="pt").input_ids
         prompt_input_ids = cls._instance.tokenizer(prompt, return_tensors="pt").input_ids
         logger.info(f"Generating audio from ParlerTTS for prompt: {prompt} with description: {description} a rate {cls._instance.config.sampling_rate}")
         generation = cls._instance.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
-        return cast(torch.Tensor, generation)
+        return cls._tts_output_to_audio_segment(generation)
 
     
     @classmethod

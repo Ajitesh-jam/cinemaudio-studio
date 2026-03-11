@@ -1,25 +1,23 @@
-import sys
-import os
-import torch
-# Get absolute path of project root (one level up from current notebook)
-project_root = os.path.abspath("..")
+# import sys
+# import os
+# import torch
+# # Get absolute path of project root (one level up from current notebook)
+# project_root = os.path.abspath("..")
 
-# Add to sys.path if not already
-if project_root not in sys.path:
-    sys.path.append(project_root)
-# Cinemaudio-studio root (for tango_new when using Tango2)
-cinema_studio_root = os.path.abspath(os.path.join(project_root, ".."))
-if cinema_studio_root not in sys.path:
-    sys.path.append(cinema_studio_root)       
-print("Project root added to sys.path:", project_root)
+# # Add to sys.path if not already
+# if project_root not in sys.path:
+#     sys.path.append(project_root)
+# # Cinemaudio-studio root (for tango_new when using Tango2)
+# cinema_studio_root = os.path.abspath(os.path.join(project_root, ".."))
+# if cinema_studio_root not in sys.path:
+#     sys.path.append(cinema_studio_root)       
+# print("Project root added to sys.path:", project_root)
 
-import numpy as np
 from helper.lib import get_model
 from pydub import AudioSegment
 import logging
-from Variable.configurations import STEPS, SFX_RATE, SFX_GAIN
+from Variable.configurations import STEPS, SFX_RATE
 from Variable.configurations import TANGO2
-from helper.lib import Tango2Model
 logger = logging.getLogger(__name__)
 
 def sfx_generator(prompt: str, duration_ms: int, model_name: str = TANGO2):

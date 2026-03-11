@@ -10,10 +10,7 @@
 
 import logging
 import os
-import numpy as np
 from pydub import AudioSegment
-from helper.lib import TangoFluxModel
-from helper.audio_processing import stretch_compression, stretch_expansion
 from Variable.configurations import PATH_TO_MOVIE_BGMS
 logger = logging.getLogger(__name__)
 

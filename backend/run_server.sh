@@ -3,7 +3,7 @@
 
 # Activate conda environment
 source $(conda info --base)/etc/profile.d/conda.sh
-conda activate musicgen_mps
+conda activate musicgen
 
 # Change to project directory
 cd "$(dirname "$0")"

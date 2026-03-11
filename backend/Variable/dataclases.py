@@ -68,6 +68,11 @@ class GenerateAudioCuesWithAudioBase64Request(BaseModel):
     cues: List[AudioCueWithAudioBase64]
     story_text: str = Field(..., description="The story text to process")
     speed_wps: Optional[float] = Field(READING_SPEED_WPS, description="Words per second reading speed")
+
+class CheckMissingCuesResponse(BaseModel):
+    """Response for check-missing-audio-cues: cues that need audio generated (for loading UI)."""
+    missing_cues: List[dict] = Field(default_factory=list, description="Cues not covered by story (id, audio_class, etc.)")
+    total_duration_ms: int = Field(0, description="Total duration in ms")
     
 class GenerateAudioCuesWithAudioBase64Response(BaseModel):
     audio_base64: str = Field(..., description="Base64 encoded WAV audio data")

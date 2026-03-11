@@ -5,8 +5,7 @@ import os
 import concurrent.futures
 from typing import Optional, List, Tuple
 from Variable.configurations import PARALLEL_EXECUTION, PARALLEL_WORKERS
-from base_sound_model import SoundEffectsModel
-from Variable.configurations import SFX_RATE
+from model.base_sound_model import SoundEffectsModel
 logger = logging.getLogger(__name__)
 
 # Thread-local storage used to track worker_id per thread in parallel generation
