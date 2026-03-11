@@ -96,6 +96,10 @@ def parse_args():
         "--num_samples", type=int, default=1,
         help="How many samples per prompt.",
     )
+    parser.add_argument(
+        "--duration", type=float, default=10.0,
+        help="Target duration of generated audio in seconds (e.g. 3.0, 5.0, 10.0).",
+    )
     
     args = parser.parse_args()
 
@@ -144,13 +148,14 @@ def main():
     
     # Generate #
     num_steps, guidance, batch_size, num_samples = args.num_steps, args.guidance, args.batch_size, args.num_samples
+    duration = args.duration
     all_outputs = []
     
     for k in tqdm(range(0, len(text_prompts), batch_size)):
         text = text_prompts[k: k+batch_size]
         
         with torch.no_grad():
-            latents = model.inference(text, scheduler, num_steps, guidance, num_samples, disable_progress=True)
+            latents = model.inference(text, scheduler, num_steps, guidance, num_samples, disable_progress=True, duration=duration)
             mel = vae.decode_first_stage(latents)
             wave = vae.decode_to_waveform(mel)
             all_outputs += [item for item in wave]

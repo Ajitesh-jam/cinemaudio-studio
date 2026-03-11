@@ -30,7 +30,7 @@ console.log(
 );
 
 // Check if conda environment is specified
-const condaEnv = "musicgen_mps";
+const condaEnv = "musicgen";
 
 let pythonCmd;
 let args;

@@ -129,7 +129,7 @@ const Index = () => {
       // 2) Generate audio sequentially in small batches (pairs).
       // As each batch resolves, we immediately update the corresponding cues,
       // so audio appears progressively instead of waiting for all cues.
-      const BATCH_SIZE = 2;
+      const BATCH_SIZE = 5;
 
       for (let i = 0; i < allCues.length; i += BATCH_SIZE) {
         const batch = allCues.slice(i, i + BATCH_SIZE);

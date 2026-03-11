@@ -1,14 +1,14 @@
-import sys
-import os
+# import sys
+# import os
 
 
-# Get absolute path of project root (one level up from current notebook)
-project_root = os.path.abspath("..")
+# # Get absolute path of project root (one level up from current notebook)
+# project_root = os.path.abspath("..")
 
-# Add to sys.path if not already
-if project_root not in sys.path:
-    sys.path.append(project_root)
-print("Project root added to sys.path:", project_root)
+# # Add to sys.path if not already
+# if project_root not in sys.path:
+#     sys.path.append(project_root)
+# print("Project root added to sys.path:", project_root)
 
 import logging
 import json
@@ -39,18 +39,7 @@ logger = logging.getLogger(__name__)
 GEMINI_AVAILABLE = True
 USE_NEW_GENAI = True
 
-try:
-    from gliner import GLiNER
-    gliner_model = GLiNER.from_pretrained("urchade/gliner_medium-v2.1")
-    GLINER_AVAILABLE = True
-except ImportError:
-    logger.warning("GLiNER not installed. Install with: pip install gliner")
-    gliner_model = None
-    GLINER_AVAILABLE = False
-except Exception as e:
-    logger.error(f"Failed to load GLiNER: {e}")
-    gliner_model = None
-    GLINER_AVAILABLE = False
+
 
 def _classify_audio_type(word: str, pos_tag: str, context: str = "") -> Tuple[str | None, str | None]:
     """
@@ -329,18 +318,6 @@ def _extract_audio_cues_simple(story_text: str, speed_wps: float):
     
     return cues_to_play, total_duration_ms
 
-def extract_local_entities(text: str):
-    """Extract entities using GLiNER if available."""
-    if not GLINER_AVAILABLE or not gliner_model:
-        return []
-    try:
-        # We define custom labels for cinematic sound design
-        labels = ["sound source", "environmental condition", "action"]
-        entities = gliner_model.predict_entities(text, labels, threshold=0.4)
-        return entities
-    except Exception as e:
-        logger.warning(f"GLiNER extraction failed: {e}")
-        return []
 
 def read_movie_bgms_csv():
     """Read the movie bgms csv file."""

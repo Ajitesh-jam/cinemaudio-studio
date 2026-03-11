@@ -3,7 +3,7 @@ import yaml
 import random
 import inspect
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import torch
 import torch.nn as nn
@@ -19,6 +19,18 @@ from tango_new.tango2.audioldm.utils import default_audioldm_config, get_metadat
 from transformers import CLIPTokenizer, AutoTokenizer
 from transformers import CLIPTextModel, T5EncoderModel, AutoModel
 
+# Compatibility shim for diffusers==0.18.2 on newer huggingface_hub versions:
+# newer huggingface_hub removed `cached_download`, but diffusers 0.18.2 still imports it.
+import huggingface_hub as _hf_hub
+
+if not hasattr(_hf_hub, "cached_download"):
+    from huggingface_hub import hf_hub_download as _hf_hub_download
+
+    def cached_download(*args, **kwargs):
+        return _hf_hub_download(*args, **kwargs)
+
+    _hf_hub.cached_download = cached_download  # type: ignore[attr-defined]
+
 import diffusers
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
@@ -27,7 +39,7 @@ from diffusers.models.autoencoder_kl import AutoencoderKL
 
 import json
 import os
-
+import sys
 
 def build_pretrained_models(name):
     checkpoint = torch.load(get_metadata()[name]["path"], map_location="cpu")
@@ -86,8 +98,8 @@ class AudioDiffusion(nn.Module):
         self.inference_scheduler = DDPMScheduler.from_pretrained(self.scheduler_name, subfolder="scheduler")
 
         if unet_model_config_path:
-            # When path is a local file (e.g. from snapshot_download), load JSON directly;
-            # diffusers.load_config expects a directory or HF repo_id, not a path to a custom-named file.
+            # Load UNet config from a local JSON file. diffusers.load_config() expects a
+            # directory or HF repo_id, not a path to a single .json file.
             unet_config = None
             path_to_try = unet_model_config_path.strip() if isinstance(unet_model_config_path, str) else unet_model_config_path
             try:
@@ -95,6 +107,15 @@ class AudioDiffusion(nn.Module):
                     unet_config = json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
+            if unet_config is None:
+                # Fallback: HF snapshot (declare-lab/tango) may not include configs/;
+                # use the config bundled with this codebase.
+                _local_config = os.path.join(os.path.dirname(__file__), "configs", "diffusion_model_config.json")
+                try:
+                    with open(_local_config) as f:
+                        unet_config = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    pass
             if unet_config is not None:
                 self.unet = UNet2DConditionModel.from_config(unet_config)
             else:
@@ -144,7 +165,7 @@ class AudioDiffusion(nn.Module):
         return snr
 
     def encode_text(self, prompt):
-        device = self.text_encoder.device
+        device = self.text_encoder.device #type: ignore
         batch = self.tokenizer(
             prompt, max_length=self.tokenizer.model_max_length, padding=True, truncation=True, return_tensors="pt"
         )
@@ -158,7 +179,7 @@ class AudioDiffusion(nn.Module):
         return encoder_hidden_states, boolean_encoder_mask
 
     def forward(self, latents, prompt, validation_mode=False):
-        device = self.text_encoder.device
+        device = self.text_encoder.device #type: ignore
         num_train_timesteps = self.noise_scheduler.num_train_timesteps
         self.noise_scheduler.set_timesteps(num_train_timesteps, device=device)
 
@@ -219,8 +240,8 @@ class AudioDiffusion(nn.Module):
         return loss
 
     @torch.no_grad()
-    def inference(self, prompt, inference_scheduler, num_steps=20, guidance_scale=3, num_samples_per_prompt=1, 
-                  disable_progress=True):
+    def inference(self, prompt, inference_scheduler, num_steps=20, guidance_scale=3, num_samples_per_prompt=1,
+                  disable_progress=True, duration=10.0):
         device = self.text_encoder.device
         classifier_free_guidance = guidance_scale > 1.0
         batch_size = len(prompt) * num_samples_per_prompt
@@ -236,10 +257,19 @@ class AudioDiffusion(nn.Module):
         timesteps = inference_scheduler.timesteps
 
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(batch_size, inference_scheduler, num_channels_latents, prompt_embeds.dtype, device)
+        # latent_t_size = duration_to_latent_t_size(duration)
+        # latents = self.prepare_latents(batch_size, inference_scheduler, num_channels_latents, prompt_embeds.dtype, device, latent_t_size=latent_t_size)
+        latents = self.prepare_latents(batch_size, inference_scheduler, num_channels_latents, prompt_embeds.dtype, device,latent_t_size=256)
 
         num_warmup_steps = len(timesteps) - num_steps * inference_scheduler.order
-        progress_bar = tqdm(range(num_steps), disable=disable_progress)
+        progress_bar = tqdm(
+            range(num_steps),
+            desc="Diffusion steps",
+            disable=disable_progress,
+            file=sys.stderr,
+            mininterval=0.5,
+            leave=True,
+        )
 
         for i, t in enumerate(timesteps):
             # expand the latents if we are doing classifier free guidance
@@ -267,8 +297,8 @@ class AudioDiffusion(nn.Module):
             latents = self.group_out(latents.permute(0, 2, 3, 1).contiguous()).permute(0, 3, 1, 2).contiguous()
         return latents
 
-    def prepare_latents(self, batch_size, inference_scheduler, num_channels_latents, dtype, device):
-        shape = (batch_size, num_channels_latents, 256, 16)
+    def prepare_latents(self, batch_size, inference_scheduler, num_channels_latents, dtype, device, latent_t_size=256):
+        shape = (batch_size, num_channels_latents, latent_t_size, 16)
         latents = randn_tensor(shape, generator=None, device=device, dtype=dtype)
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * inference_scheduler.init_noise_sigma
@@ -329,7 +359,7 @@ import yaml
 import random
 import inspect
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 import torch
 import torch.nn as nn

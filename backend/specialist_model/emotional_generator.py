@@ -3,7 +3,8 @@ import numpy as np
 from pydub import AudioSegment
 
 from Variable.configurations import STEPS, EMOTIONAL_RATE, EMOTIONAL_GAIN
-from helper.lib import TangoFluxModel
+from helper.lib import get_model
+from Variable.configurations import TANGO2
 
 logger = logging.getLogger(__name__)
 
@@ -12,29 +13,44 @@ def emotional_music_generator(prompt: str, duration_ms: int):
     logger.info(f"Generating: '{prompt}' ({duration_ms}ms)")
 
     duration_s = int(duration_ms / 1000.0)
-    audio_arr = TangoFluxModel.generate(prompt, steps=STEPS, duration=duration_s)
+    audio_arr = get_model(TANGO2).generate(prompt, steps=STEPS, duration=duration_s)
 
-    if audio_arr is None or audio_arr.numel() == 0:
+    if audio_arr is None :
         raise ValueError(
             f"Failed to generate audio for prompt: '{prompt}'. Model returned empty array."
         )
 
-    waveform = audio_arr.squeeze().cpu().numpy()
+    # waveform = audio_arr.squeeze().cpu().numpy()
 
-    if waveform.size == 0:
-        raise ValueError(f"Generated audio waveform is empty for prompt: '{prompt}'")
+    # if waveform.size == 0:
+    #     raise ValueError(f"Generated audio waveform is empty for prompt: '{prompt}'")
 
-    logger.debug(f"Audio clip from prompt {prompt} generated (shape: {waveform.shape})")
+    # logger.debug(f"Audio clip from prompt {prompt} generated (shape: {waveform.shape})")
 
-    audio_bytes = (waveform * 32767 * EMOTIONAL_GAIN).astype(np.int16).tobytes()
+    # audio_bytes = (waveform * 32767 * EMOTIONAL_GAIN).astype(np.int16).tobytes()
     segment = AudioSegment(
-        data=audio_bytes,
+        data=audio_arr.tobytes(),
         sample_width=2,
         frame_rate=EMOTIONAL_RATE,
         channels=1,
     )
     return segment
 
+def emotional_music_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2):
+    """Generates a background music track for a batch of prompts."""
+    logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms")
+    duration_s = int(duration_ms / 1000.0)
+    model_cls = get_model(model_name)
+    audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s)
+    if audio_arr is None :
+        raise ValueError(f"Failed to generate audio for batch of {len(prompts)} prompts. Model returned empty array.")
+    segments = [AudioSegment(
+        data=audio_arr_item.tobytes(),
+        sample_width=2,
+        frame_rate=EMOTIONAL_RATE,
+        channels=1,
+    ) for audio_arr_item in audio_arr]
+    return segments
 
 # TESTING
 

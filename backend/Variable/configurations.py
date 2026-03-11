@@ -38,13 +38,13 @@ PARALLEL_EXECUTION = True  # Set to False for sequential execution (thread-safe 
 PARALLEL_WORKERS = 2  # Number of worker threads/processes for parallel execution (default: 2)
 
 
-SFX_RATE=44100
+SFX_RATE=16000
 SFX_GAIN=0.5
 
-ENV_RATE=44100
+ENV_RATE=16000
 ENV_GAIN=0.7
     
-EMOTIONAL_RATE=44100
+EMOTIONAL_RATE=16000
 EMOTIONAL_GAIN=0.8
 
 
@@ -53,3 +53,14 @@ PATH_TO_MOVIE_BGM_METADATA = "data/metadata/movie_bgms.csv"
 
 
 SOUND_TYPES = ["SFX", "AMBIENCE", "MUSIC", "NARRATOR","MOVIE_BGM"]
+
+
+# Supported model names: use these with get_model() or generate_sound()
+TANGO_FLUX = "TangoFlux"
+ELEVEN_LABS = "ElevenLabs"
+TANGO2 = "Tango2"
+
+
+SFX_MODEL = TANGO2
+ENV_MODEL = TANGO2
+MUSIC_MODEL = TANGO2

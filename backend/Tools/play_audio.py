@@ -12,27 +12,27 @@ import numpy as np
 from pydub import AudioSegment
 from Variable.dataclases import AudioCue, NarratorCue, Cue
 from Variable.model_map import SPECIALIST_MAP
-from helper.lib import ParlerTTSModel
+from helper.lib import get_model
 import logging
 
 logger = logging.getLogger(__name__)
 
-def _tts_numpy_to_audio_segment(audio_arr: np.ndarray, duration_ms: int) -> AudioSegment:
-    """Convert TTS numpy output (float32) to AudioSegment."""
-    model = ParlerTTSModel.get_instance()["model"]
-    sample_rate = model.config.sampling_rate
-    gain = 0.9
-    audio_arr = np.clip(audio_arr, -1.0, 1.0)
-    audio_bytes = (audio_arr * 32767 * gain).astype(np.int16).tobytes()
-    seg = AudioSegment(
-        data=audio_bytes,
-        sample_width=2,
-        frame_rate=sample_rate,
-        channels=1,
-    )
-    if len(seg) > duration_ms:
-        seg = seg[:duration_ms]
-    return seg  # type: ignore[return-value]
+# def _tts_numpy_to_audio_segment(audio_arr: np.ndarray, duration_ms: int) -> AudioSegment:
+#     """Convert TTS numpy output (float32) to AudioSegment."""
+#     model = get_model("parlertts")
+#     sample_rate = model.config.sampling_rate
+#     gain = 0.9
+#     audio_arr = np.clip(audio_arr, -1.0, 1.0)
+#     audio_bytes = (audio_arr * 32767 * gain).astype(np.int16).tobytes()
+#     seg = AudioSegment(
+#         data=audio_bytes,
+#         sample_width=2,
+#         frame_rate=sample_rate,
+#         channels=1,
+#     )
+#     if len(seg) > duration_ms:
+#         seg = seg[:duration_ms]
+#     return seg  # type: ignore[return-value]
 
 
 def create_audio_from_audiocue(audio_cue: Cue) -> AudioSegment:
@@ -45,10 +45,7 @@ def create_audio_from_audiocue(audio_cue: Cue) -> AudioSegment:
         logger.info(f"Creating audio from narrator cue: {audio_cue.id} ({audio_cue.audio_type})")
         specialist_func = SPECIALIST_MAP[audio_cue.audio_type]
         audio_arr = specialist_func(audio_cue.story, audio_cue.narrator_description)
-        audio_arr = audio_arr * int((audio_cue.weight_db + 20) / 10)
-        clip = _tts_numpy_to_audio_segment(audio_arr, audio_cue.duration_ms)
-        fade_ms = min(100, audio_cue.duration_ms // 4)
-        faded = clip.fade_in(fade_ms).fade_out(fade_ms)
+
         return faded  # type: ignore[return-value]
     else:
         logger.info(f"Creating audio from audio cue: {audio_cue.audio_class} ({audio_cue.audio_type})")

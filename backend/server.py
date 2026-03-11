@@ -19,20 +19,24 @@ import uvicorn
 project_root = os.path.abspath(os.path.dirname(__file__))
 if project_root not in sys.path:
     sys.path.append(project_root)
+    
+# Cinemaudio-studio root (for tango_new when using Tango2)
+cinema_studio_root = os.path.abspath(os.path.join(project_root, "."))
+if cinema_studio_root not in sys.path:
+    sys.path.append(cinema_studio_root)    
 
 # Import project-specific modules
 from Variable.dataclases import (
-    AudioCue,
-    AudioCueWithAudioBase64,
     Cue,
     DecideCuesRequest,
     DecideCuesResponse,
     EvaluateAudioRequest,
     EvaluateAudioResponse,
-    GenerateAudioFromCuesRequest,
-    GenerateAudioFromCuesResponse,
+    AudioCueWithAudioBase64,
     GenerateFromStoryRequest,
     GenerateFromStoryResponse,
+    GenerateAudioFromCuesRequest,
+    GenerateAudioFromCuesResponse,
     GenerateAudioCuesWithAudioBase64Request,
     GenerateAudioCuesWithAudioBase64Response
 )
@@ -40,19 +44,37 @@ from helper.audio_conversions import dict_to_cue
 
 from Variable.configurations import READING_SPEED_WPS, PARALLEL_EXECUTION, PARALLEL_WORKERS
 from Tools.decide_audio import decide_audio_cues
-from superimposition_model.superimposition_model import superimpose_audio_cues, superimpose_audio_cues_with_audio_base64,superimposition_model
+from superimposition_model.superimposition_model import SuperimpositionModel
 from Evaluation.evaluator import AudioEvaluator
 from helper.audio_conversions import audio_to_base64
 from helper.parallel_audio_generation import parallel_audio_generation
-from helper.lib import TangoFluxModel, ParlerTTSModel
 
-# Configure logging to explicitly output to stdout/stderr
+from helper.lib import init_models , superimposition_model_ins
+# Configure logging to explicitly output to stdout/stderr with colored output
+
+class ColorFormatter(logging.Formatter):
+    COLORS = {
+        'DEBUG': '\033[94m',     # Blue
+        'INFO': '\033[92m',      # Green
+        'WARNING': '\033[93m',   # Yellow
+        'ERROR': '\033[91m',     # Red
+        'CRITICAL': '\033[95m',  # Magenta
+    }
+    RESET = '\033[0m'
+
+    def format(self, record):
+        color = self.COLORS.get(record.levelname, self.RESET)
+        message = super().format(record)
+        return f"{color}{message}{self.RESET}"
+
+color_formatter = ColorFormatter('%(name)s - %(levelname)s - %(message)s\n')
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(color_formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(name)s - %(levelname)s - %(message)s\n',
-    handlers=[
-        logging.StreamHandler(sys.stdout)  # Explicitly use stdout for all logs
-    ],
+    handlers=[stream_handler],
     force=True  # Override any existing configuration
 )
 logger = logging.getLogger(__name__)
@@ -79,23 +101,7 @@ app.add_middleware(
 def preload_models():
     """Preload specialist models at startup so they are downloaded once before first request."""
     logger.info("Preloading specialist models...")
-    
-    # Preload ParlerTTS model (always needed)
-    ParlerTTSModel.get_instance()
-    logger.info("Preloaded ParlerTTS model")
-    
-    # Preload TangoFlux models based on execution mode
-    if PARALLEL_EXECUTION:
-        # Parallel mode: pre-initialize model pool with PARALLEL_WORKERS instances
-        logger.info(f"Pre-initializing TangoFlux model pool with {PARALLEL_WORKERS} workers for parallel execution...")
-        TangoFluxModel.initialize_pool(PARALLEL_WORKERS)
-        logger.info(f"Preloaded {PARALLEL_WORKERS} TangoFlux model instances for parallel execution")
-    else:
-        # Sequential mode: preload single instance
-        TangoFluxModel.get_instance()
-        logger.info("Preloaded TangoFlux model (sequential mode)")
-    
-    logger.info("All specialist models preloaded\n\n")
+    init_models()
 
 
 # API Endpoints
@@ -211,7 +217,7 @@ async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAu
         
         logger.info(f"superimposed cues: {len(audio_cues)}")
 
-        final_audio = superimpose_audio_cues_with_audio_base64(audio_cues, total_duration_ms)
+        final_audio = superimposition_model_ins.superimpose_audio_cues_with_audio_base64(request.story_text, audio_cues, total_duration_ms)
         return GenerateAudioCuesWithAudioBase64Response(
             audio_base64=audio_to_base64(final_audio),
             message="Successfully generated audio cues with audio base64",
@@ -237,7 +243,7 @@ async def generate_from_story(request: GenerateFromStoryRequest):
         # Step 1: Decide audio cues
         speed_wps = request.speed_wps if request.speed_wps is not None else READING_SPEED_WPS
         
-        final_audio = superimposition_model(request.story_text, speed_wps)
+        final_audio = superimposition_model_ins.superimposition_model(request.story_text, speed_wps)
         return GenerateFromStoryResponse(audio_base64=audio_to_base64(final_audio))
     except Exception as e:
         logger.error(f"Error generating audio from story: {e}", exc_info=True)
