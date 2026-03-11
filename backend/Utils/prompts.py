@@ -203,7 +203,7 @@ JSON
 
 
 prompt_to_fill_missing_audio_cues = PromptTemplate(
-    input_variables=["story_text", "audio_cues"],
+    input_variables=["story_text", "audio_cues", "movie_bgms_csv"],
     template=(
         """
 You are specialized agent good at analyzing stories and filling missing audio cues.

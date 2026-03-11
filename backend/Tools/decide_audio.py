@@ -31,6 +31,7 @@ try:
 except Exception:
     nlp = None
     nlp_available = False
+from helper.lib import read_movie_bgms_csv
 
 import os
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -319,10 +320,7 @@ def _extract_audio_cues_simple(story_text: str, speed_wps: float):
     return cues_to_play, total_duration_ms
 
 
-def read_movie_bgms_csv():
-    """Read the movie bgms csv file."""
-    with open(PATH_TO_MOVIE_BGM_METADATA, "r") as f:
-        return f.read()
+
 
 def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = True):
     # if not GEMINI_AVAILABLE:

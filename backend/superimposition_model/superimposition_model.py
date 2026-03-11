@@ -22,7 +22,7 @@ from Variable.configurations import READING_SPEED_WPS
 from helper.audio_conversions import base64_to_audio, audio_to_base64
 from Utils.prompts import prompt_to_fill_missing_audio_cues
 from Utils.llm import query_llm
-
+from helper.lib import read_movie_bgms_csv
 # from Variable.audio_classes_dict import SOUND_KEYWORDS
 
 
@@ -70,7 +70,8 @@ class SuperimpositionModel:
         
         not_covered_audio_cues = []     
         if audio_cues_to_fill:
-            prompt = prompt_to_fill_missing_audio_cues.format(story_text=story_text, audio_cues=audio_cues_to_fill)
+            movie_bgms_csv = read_movie_bgms_csv()
+            prompt = prompt_to_fill_missing_audio_cues.format(story_text=story_text, audio_cues=audio_cues_to_fill, movie_bgms_csv=movie_bgms_csv)
             response = query_llm(llm_name="gemini", model_name="gemini-2.5-flash", prompt=prompt)
             if response:
                 not_covered_audio_cues = response.get("audio_cues", [])

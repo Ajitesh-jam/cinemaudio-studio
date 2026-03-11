@@ -12,6 +12,9 @@ from Variable.configurations import (
 )
 load_dotenv()
 
+import pandas as pd
+from Variable.configurations import PATH_TO_MOVIE_BGM_METADATA
+
 from model.tangoflux_model import TangoFluxModel
 from model.elevenlabs_model import ElevenLabsModel
 from model.tango2_model import Tango2Model
@@ -120,4 +123,10 @@ def generate_sound(
     if model_name.strip().lower() == "elevenlabs":
         return model_cls.generate(prompt, **kwargs)
     return model_cls.generate(prompt, steps=steps, duration=duration, worker_id=worker_id, **kwargs)
+
+def read_movie_bgms_csv():
+    """Read the movie bgms csv file."""
+    return pd.read_csv(PATH_TO_MOVIE_BGM_METADATA)    
+    
+
 
