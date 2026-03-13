@@ -69,3 +69,4 @@ MUSIC_MODEL = TANGO2
 class ModelConfig:
     def __init__(self):
        self.fill_coverage_by_llm = True
+       self.use_dsp = True

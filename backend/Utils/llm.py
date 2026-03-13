@@ -1,8 +1,10 @@
 import os
 import json
 import logging
-
+import dotenv
 logger = logging.getLogger(__name__)
+
+dotenv.load_dotenv()
 
 def query_llm(
     llm_name: str,
