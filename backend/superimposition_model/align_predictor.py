@@ -29,12 +29,6 @@ from torch.utils.data import Dataset, DataLoader
 from sentence_transformers import SentenceTransformer
 
 from model.dl_based_alignment_predictor import CinematicMixPredictor
-
-
-
-# ==========================================
-# 1. THE DATASET CLASS
-# ==========================================
 class CinematicMixDataset(Dataset):
     def __init__(self, data_samples, embedder):
         """
@@ -195,9 +189,7 @@ class MixingInferencePipeline:
                 
         return results
 
-# ==========================================
-# USAGE EXAMPLE FOR YOUR FASTAPI BACKEND
-# ==========================================
+
 if __name__ == "__main__":
     # Initialize your pipeline
     pipeline = MixingInferencePipeline()

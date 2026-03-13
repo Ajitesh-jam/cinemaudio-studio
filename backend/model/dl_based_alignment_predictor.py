@@ -1,4 +1,5 @@
 import os
+import random
 import sys
 # Add project root to path
 # import sys
@@ -36,6 +37,9 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 from model.parlerTTSModel import ParlerTTSModel
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from helper.audio_conversions import audio_to_base64
 
@@ -129,61 +133,115 @@ class WordAligner:
 
 
 class CinematicMixPredictor(nn.Module):
-    def __init__(self, embed_dim=384):
+    
+    def __init__(self, embed_dim=384, n_heads=4, attention_dropout=0.1):
         """
-        A Multi-Task Feed-Forward Network to predict mixing parameters.
-        embed_dim depends on the SentenceTransformer model (all-MiniLM-L6-v2 is 384).
-        Input size = (Story Embed) + (Class Embed) + (Whisper embedding)
-                   = 384 + 384 + 384 = 1152
+        CinematicMixPredictor rewritten as a model using self and cross attention
+        to fuse story, class, and whisper embedding inputs.
+
+        Input tokens: [story_embedding, class_embedding, whisper_anchor_tensor, extra_features]
+        self-attention and cross-attention is used to learn the relationship.
         """
         super(CinematicMixPredictor, self).__init__()
-        
-        input_size = 2*(embed_dim) + 1
-        
-        # Hidden Layers
-        self.layer1 = nn.Linear(input_size, 2048)
-        self.relu1 = nn.ReLU()
-        self.dropout1 = nn.Dropout(0.2)
-        
-        self.layer2 = nn.Linear(2048, 1024)
-        self.relu2 = nn.ReLU()
-        
-        # Output Layer: predicts [start_time, weight_db, duration]
-        self.output_layer = nn.Linear(1024, 3)
-        
-        self.embedder = self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        self.embed_dim = self.embedder.get_sentence_embedding_dimension()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-        # Ensure model layers live on the same device as embeddings
+        self.embed_dim = embed_dim
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+        self.n_heads = n_heads
+
+        # Project whisper_anchor + extra_features (2 floats) up to 'embed_dim'
+        self.anchor_project = nn.Linear(2, embed_dim)
+
+        # LayerNorms for inputs
+        self.story_ln = nn.LayerNorm(embed_dim)
+        self.class_ln = nn.LayerNorm(embed_dim)
+        self.anchor_ln = nn.LayerNorm(embed_dim)
+
+        # Self-attention for contextualizing all 3 representations together
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim, num_heads=n_heads, dropout=attention_dropout, batch_first=True
+        )
+
+        # Simple FeedForward after attention
+        self.ffn = nn.Sequential(
+            nn.Linear(3 * embed_dim, 1024),
+            nn.ReLU(),
+            nn.Dropout(attention_dropout),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 3)  # [start_time, weight_db, duration]
+        )
+
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
         self.to(self.device)
 
     def forward(self, x):
-        logger.info(f"inference input shape: {x.shape}")
-        x = self.layer1(x)
-        x = self.relu1(x)
-        x = self.dropout1(x)
-        
-        x = self.layer2(x)
-        x = self.relu2(x)
-        
+        """
+        x: shape [batch, input_dim]
+            - where input_dim = 2*embed_dim + 2
+
+        Input packing:
+            x[:, :embed_dim]          = story embedding
+            x[:, embed_dim:2*embed_dim] = class embedding
+            x[:, 2*embed_dim:]        = [whisper_anchor, extra_feature] (2 floats)
+        """
+
+        # Allow passing a single example vector of shape [input_dim]
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+
+
+        # Split x into components
+        story_emb = x[:, :self.embed_dim]
+        class_emb = x[:, self.embed_dim:2 * self.embed_dim]
+        anchor_feats = x[:, 2 * self.embed_dim:]  # should have shape [batch, 2]
+
+        # Project anchor_feats into 'embed_dim'
+        anchor_emb = self.anchor_project(anchor_feats)
+
+        # Layer normalization
+        story_emb = self.story_ln(story_emb)
+        class_emb = self.class_ln(class_emb)
+        anchor_emb = self.anchor_ln(anchor_emb)
+
+        # Stack as tokens [batch, 3, embed_dim]
+        tokens = torch.stack([story_emb, class_emb, anchor_emb], dim=1)
+
+        # Apply (self + cross) attention to all tokens
+        attn_out, _ = self.self_attn(tokens, tokens, tokens)
+
+        # Flatten all three tokens
+        attn_flat = attn_out.reshape(attn_out.shape[0], -1)  # [batch, 3*embed_dim]
+
+        # Feedforward to output
+        output = self.ffn(attn_flat)
+        return output
         return self.output_layer(x)
     
     def train_model(self, dataloader, epochs=50, learning_rate=0.001):
         criterion = nn.MSELoss()
         optimizer = Adam(self.parameters(), lr=learning_rate)
-        
+        losses = []
         for epoch in range(epochs):
+            epoch_loss = 0.0
+            num_batches = 0
             for inputs, targets in dataloader:
+                # Ensure tensors are on the same device as the model
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+
                 optimizer.zero_grad()
                 outputs = self(inputs)
                 loss = criterion(outputs, targets)
+                epoch_loss += loss.item()
+                num_batches += 1
                 loss.backward()
                 optimizer.step()
-                
-            print(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item()}")
+
+            avg_loss = epoch_loss / max(num_batches, 1)
+            losses.append(avg_loss)
+            print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss}")
             
-        return self
+        return losses
     
     def save_model(self, path):
         torch.save(self.state_dict(), path)
@@ -227,7 +285,7 @@ class CinematicMixPredictor(nn.Module):
         logger.info(f"Most relevant word: {words_json[best_idx]}")
         return words_json[best_idx]
         
-    
+
     def predict(
         self,
         story_prompt: str,
@@ -269,10 +327,11 @@ class CinematicMixPredictor(nn.Module):
                 )
                 
                 # 2. Concatenate into our input vector X
-                # Shape: [384] + [384] + [384] = [1152]
+                # Shape: [384] + [384] + [2] = [768]
                 most_relevant_word = self.get_timestemap_of_most_relevant_word(whisper_json, audio_class)
-                x = torch.cat((story_emb, class_emb, whisper_emb), dim=0)
-                x = torch.cat((x, most_relevant_word["start"]), dim=0)
+                # Prepare the anchor tensor with the most relevant word start/end (as a tensor of shape [2])
+                anchor_tensor = torch.tensor([most_relevant_word["start"], most_relevant_word["end"]], dtype=torch.float32, device=story_emb.device)
+                x = torch.cat((story_emb, class_emb, anchor_tensor), dim=0)
                 
                 # 4. Predict the mixing parameters
                 outputs = self(x)
@@ -283,29 +342,141 @@ class CinematicMixPredictor(nn.Module):
 
 
 
+def train_model(epochs=50, learning_rate=0.001):    
+    descriptions = ["A male speaker with a neutral tone delivers his words clearly and confidently in a casual, everyday setting.", "A female speaker with a high-pitched voice is delivering her speech at a really fast speed in a noisy environment.", "A male speaker with a low-pitched voice is delivering his speech at a really slow speed in a quiet environment.","A female speaker with a low-pitched voice is delivering her speech at a really fast speed in a noisy environment."]
 
-# testing the model
-if __name__ == "__main__":
     model = CinematicMixPredictor()
-    # model.load_model(MODEL_PATH)
-    story_prompt = "A dog barking in the forest while it is raining heavily."
-    description = "A male speaker with a neutral tone delivers his words clearly and confidently in a casual, everyday setting."
-    audio_classes = ["Dog barking", "Rain falling", "Suspense music"]
-    narrator_audio_segment = ParlerTTSModel.generate(
-        prompt=story_prompt, description=description
-    )
-    narrator_audio_base64 = audio_to_base64(narrator_audio_segment)
+ 
+    datapath = "../data/yt_videos/yt_dataset.jsonl"
+    dataset = []
+    with open(datapath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            data = json.loads(line)
+            story_prompt = data["story_prompt"]
+            
+            
+            random_description = random.choice(descriptions)
+                
+            narrator_audio_segment = ParlerTTSModel.generate(prompt=story_prompt, description=random_description)
+            narrator_audio_base64 = audio_to_base64(narrator_audio_segment)
+
+            audio_classes = []
+            for audio_cues in data["cues"]:
+                audio_classes.append({
+                    "audio_class": audio_cues["audio_class"],
+                    "weight_db": audio_cues["weight_db"],
+                    "start_time_ms": audio_cues["starting_time"],
+                    "duration_ms": audio_cues["duration"],
+                })
+            dataset.append((story_prompt, audio_classes, narrator_audio_base64))
+    
+    # Build training examples: one example per (story, cue)
+    input_tensors = []
+    target_tensors = []
+
+    for story_prompt, audio_classes, narrator_audio_base64 in dataset:
+        # Whisper word-level timestamps for this narrated story
+        whisper_json = model.make_whisper_embedding(story_prompt, narrator_audio_base64)
+
+        # Story embedding (same for all cues of this story)
+        story_emb = model.embedder.encode(
+            story_prompt,
+            convert_to_tensor=True,
+            device=str(model.device),
+        )
+
+        for cue in audio_classes:
+            audio_class = cue["audio_class"]
+
+            # Class embedding
+            class_emb = model.embedder.encode(
+                audio_class,
+                convert_to_tensor=True,
+                device=str(model.device),
+            )
+
+            # Anchor from most relevant word timestamps
+            most_relevant_word = model.get_timestemap_of_most_relevant_word(
+                whisper_json, audio_class
+            )
+            anchor_tensor = torch.tensor(
+                [most_relevant_word["start"], most_relevant_word["end"]],
+                dtype=torch.float32,
+                device=model.device,
+            )
+
+            # Concatenate into model input vector
+            x = torch.cat((story_emb, class_emb, anchor_tensor), dim=0)
+
+            # Target: [start_time_ms, weight_db, duration_ms]
+            y = torch.tensor(
+                [
+                    cue["start_time_ms"],
+                    cue["weight_db"],
+                    cue["duration_ms"],
+                ],
+                dtype=torch.float32,
+                device=model.device,
+            )
+
+            input_tensors.append(x)
+            target_tensors.append(y)
+
+    # Stack and create DataLoader
+    inputs_tensor = torch.stack(input_tensors)
+    targets_tensor = torch.stack(target_tensors)
+
+    from torch.utils.data import TensorDataset, DataLoader
+
+    train_dataset = TensorDataset(inputs_tensor, targets_tensor)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+
+    losses = model.train_model(train_loader, epochs, learning_rate)
+    model.save_model(MODEL_PATH)
+    
+    plt.figure(figsize=(8,6))
+    plt.plot(range(1, len(losses)+1), losses, marker='o')
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training Loss Curve")
+    plt.grid(True)
+    plt.show()
+    plt.tight_layout()
+    plt.savefig("loss_curve.png", bbox_inches="tight")
+    plt.close()
+    
+    print("Model saved to", MODEL_PATH)
+    
+    
+    
+    
+    
+
+
+
+# # testing the model
+# if __name__ == "__main__":
+#     model = CinematicMixPredictor()
+#     # model.load_model(MODEL_PATH)
+#     story_prompt = "A dog barking in the forest while it is raining heavily."
+#     description = "A male speaker with a neutral tone delivers his words clearly and confidently in a casual, everyday setting."
+#     audio_classes = ["Dog barking", "Rain falling", "Suspense music"]
+#     narrator_audio_segment = ParlerTTSModel.generate(
+#         prompt=story_prompt, description=description
+#     )
+#     narrator_audio_base64 = audio_to_base64(narrator_audio_segment)
    
-    results = model.predict(story_prompt, audio_classes, narrator_audio_base64)
+#     results = model.predict(story_prompt, audio_classes, narrator_audio_base64)
     
     
-    print(json.dumps(results, indent=2))
+#     print(json.dumps(results, indent=2))
     
     
     
-    # bank name
-    # baknk addrews
-    # isfc 
-    # acorun number
-    # pan  number
     
+    
+# train model 
+train_model()
