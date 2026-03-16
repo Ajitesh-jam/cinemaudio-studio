@@ -69,4 +69,8 @@ MUSIC_MODEL = TANGO2
 class ModelConfig:
     def __init__(self):
        self.fill_coverage_by_llm = True
-       self.use_dsp = True
+       self.use_dsp = True  
+       self.use_llm_to_predict_align = False
+       self.use_dsp_to_predict_align = False
+       self.use_avg_llm_and_dsp_to_predict_align = True
+       self.use_dl_based_llm_and_dsp_alignment_predictor = False

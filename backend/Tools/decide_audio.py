@@ -32,7 +32,7 @@ except Exception:
     nlp = None
     nlp_available = False
 from helper.lib import read_movie_bgms_csv
-
+from Utils.llm import query_llm
 import os
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 load_dotenv(os.path.join(backend_dir, ".env"))
@@ -353,15 +353,11 @@ def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = Tru
             logger.error("No prompt found")
             return None
        
-        model_name = 'gemini-2.5-flash'
+        model_name = 'gemini-3-flash-preview'
         response_text = None
         try:
-            client = genai.Client(api_key=api_key)  # type: ignore
-            response = client.models.generate_content(  # type: ignore
-                model=model_name,
-                contents=prompt
-            )
-            response_text = response.text
+            response = query_llm(llm_name="gemini", model_name=model_name, prompt=prompt)
+            response_text = response
         except Exception as e:
             logger.error(f"\n\nModel {model_name} failed: {e}\n\n")
             return None
@@ -369,14 +365,31 @@ def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = Tru
         if not response_text:
             logger.error("No available Gemini model found")
             return None
-        
-        # Clean potential markdown backticks
+
+        # query_llm may return already-parsed dict/list; downstream expects a list of cues
+        if isinstance(response_text, list):
+            return response_text
+        if isinstance(response_text, dict):
+            cues = (
+                response_text.get("audio_cues")
+                or response_text.get("cues")
+                or response_text.get("results")
+            )
+            if isinstance(cues, list):
+                return cues
+            return []
+        # Otherwise it's a string: clean markdown and parse
         json_str = response_text.replace("```json", "").replace("```", "").strip()
-        # Extract JSON if embedded in text
         json_match = re.search(r'\[[\s\S]*?\]', json_str)
         if json_match:
             json_str = json_match.group()
-        return json.loads(json_str)
+        parsed = json.loads(json_str)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            cues = parsed.get("audio_cues") or parsed.get("cues") or parsed.get("results")
+            return cues if isinstance(cues, list) else []
+        return []
     except Exception as e:
         logger.error(f"Gemini Error: {e}")
         return None

@@ -323,3 +323,58 @@ JSON
 """
     ),
 )
+
+
+
+alignment_prediction_prompt = PromptTemplate(
+    input_variables=["story_prompt", "audio_classes", "whisper_json"],
+    template=(
+        """
+        You are a helpful assistant that predicts the alignment of the audio classes with the story prompt.
+        I have a Story text as : {story_prompt}
+        I have generated Audio Cues: {audio_classes}
+        I have generated Whisper JSON: {whisper_json}
+        
+        You need to predict the alignment of the audio classes with the story prompt.
+        You need to return the alignment in the following format:
+        
+          "audio_cues": [
+          {{
+            "id": <same id as the audio class>,
+            "audio_class": <same as the audio class>,
+            "audio_type": <same as the audio type>,
+            "start_time_ms": 5000, # starting time in milliseconds
+            "duration_ms": 10000, # duration in milliseconds
+            "weight_db": 0.0,
+            "fade_ms": 500
+          }}, 
+          ]
+          
+          example
+            "story_prompt": "A helmet-clad soldier cautiously navigates a grimy, dimly lit urban corridor before being brutally ambushed by a bloodied operative, who then, protecting a young boy, plunges into a chaotic close-quarters gunfight against multiple assailants."
+            "whisper.json":
+            [{{"word": "A", "start": 0.0, "end": 0.18}}, {{"word": "helmet,", "start": 0.18, "end": 1.42}}, {{"word": "clad", "start": 1.42, "end": 1.9}}, {{"word": "soldier", "start": 1.9, "end": 2.34}}, {{"word": "cautiously", "start": 2.34, "end": 3.02}}, {{"word": "navigates", "start": 3.02, "end": 3.6}}, {{"word": "a", "start": 3.6, "end": 3.72}}, {{"word": "grimy,", "start": 3.72, "end": 4.34}}, {{"word": "dimly", "start": 4.34, "end": 4.62}}, {{"word": "lit", "start": 4.62, "end": 4.86}}, {{"word": "urban", "start": 4.86, "end": 5.22}}, {{"word": "corridor", "start": 5.22, "end": 5.62}}, {{"word": "before", "start": 5.62, "end": 6.22}}, {{"word": "being", "start": 6.22, "end": 6.54}}, {{"word": "brutally", "start": 6.54, "end": 6.92}}, {{"word": "ambushed", "start": 6.92, "end": 7.6}}, {{"word": "by", "start": 7.6, "end": 7.7}}, {{"word": "a", "start": 7.7, "end": 7.86}}, {{"word": "bloodied", "start": 7.86, "end": 8.14}}, {{"word": "operative,", "start": 8.14, "end": 9.42}}, {{"word": "who", "start": 9.42, "end": 9.48}}, {{"word": "then", "start": 9.48, "end": 9.7}}, {{"word": "protecting", "start": 9.7, "end": 10.22}}, {{"word": "a", "start": 10.22, "end": 10.44}}, {{"word": "young", "start": 10.44, "end": 10.64}}, {{"word": "boy", "start": 10.64, "end": 10.98}}, {{"word": "plunges", "start": 10.98, "end": 11.96}}, {{"word": "into", "start": 11.96, "end": 12.2}}, {{"word": "a", "start": 12.2, "end": 12.38}}, {{"word": "chaotic", "start": 12.38, "end": 12.7}}, {{"word": "close", "start": 12.7, "end": 13.1}}, {{"word": "-quarters", "start": 13.1, "end": 13.48}}, {{"word": "gunfight", "start": 13.48, "end": 14.04}}, {{"word": "against", "start": 14.04, "end": 14.56}}, {{"word": "multiple", "start": 14.56, "end": 15.1}}, {{"word": "assailants.", "start": 15.1, "end": 16.0}}]
+            "audio_cues": [
+              {{ "id": 1, "audio_class": "Distant urban street ambience", "audio_type": "AMBIENCE", "starting_time": 0.0, "duration": 16.0, "weight_db": -35.0 }},
+              {{ "id": 2, "audio_class": "Tense synth drone with subtle rhythmic percussion", "audio_type": "MUSIC", "starting_time": 0.0, "duration": 8.8, "weight_db": -25.0 }},
+              {{ "id": 3, "audio_class": "Heavy tactical footsteps and gear rustle", "audio_type": "AMBIENCE", "starting_time": 0.0, "duration": 8.5, "weight_db": -20.0 }},
+              {{ "id": 4, "audio_class": "Brutal melee combat impacts and vocal grunts", "audio_type": "SFX", "starting_time": 8.7, "duration": 6.5, "weight_db": -10.0 }},
+              {{ "id": 5, "audio_class": "Pistol slide rack and reload click", "audio_type": "SFX", "starting_time": 20.0, "duration": 0.5, "weight_db": -12.0 }},
+              {{ "id": 6, "audio_class": "Deep male voice (low dialogue, 'Come on')", "audio_type": "NARRATOR", "starting_time": 20.5, "duration": 0.5, "weight_db": -18.0 }},
+              {{ "id": 7, "audio_class": "Rapid gunfire, body impacts, and close-quarters combat SFX", "audio_type": "SFX", "starting_time": 25.9, "duration": 4.1, "weight_db": -7.0 }},
+              {{ "id": 8, "audio_class": "Aggressive percussive action music swell", "audio_type": "MUSIC", "starting_time": 25.5, "duration": 4.5, "weight_db": -10.0 }}
+            ],
+            the output should be something like this:
+            "audio_cues": [
+              {{ "id": 1, "audio_class": "Distant urban street ambience", "audio_type": "AMBIENCE", "start_time_ms": 0, "duration_ms": 8000, "weight_db": -35.0, "fade_ms": 500 }},
+              {{ "id": 2, "audio_class": "Tense synth drone with subtle rhythmic percussion", "audio_type": "MUSIC", "start_time_ms": 0, "duration_ms": 4690, "weight_db": -25.0, "fade_ms": 500 }},
+              {{ "id": 3, "audio_class": "Heavy tactical footsteps and gear rustle", "audio_type": "AMBIENCE", "start_time_ms": 0, "duration_ms": 4250, "weight_db": -20.0, "fade_ms": 500 }},
+              {{ "id": 4, "audio_class": "Brutal melee combat impacts and vocal grunts", "audio_type": "SFX", "start_time_ms": 4690, "duration_ms": 1810, "weight_db": -10.0, "fade_ms": 500 }},
+              {{ "id": 5, "audio_class": "Pistol slide rack and reload click", "audio_type": "SFX", "start_time_ms": 10600, "duration_ms": 500, "weight_db": -12.0, "fade_ms": 500 }},
+              {{ "id": 6, "audio_class": "Deep male voice (low dialogue, 'Come on')", "audio_type": "NARRATOR", "start_time_ms": 11000, "duration_ms": 500, "weight_db": -18.0, "fade_ms": 500 }},
+              {{ "id": 7, "audio_class": "Rapid gunfire, body impacts, and close-quarters combat SFX", "audio_type": "SFX", "start_time_ms": 13810, "duration_ms": 2190, "weight_db": -7.0, "fade_ms": 500 }},
+              {{ "id": 8, "audio_class": "Aggressive percussive action music swell", "audio_type": "MUSIC", "start_time_ms": 15000, "duration_ms": 1000, "weight_db": -10.0, "fade_ms": 500 }}
+            ],
+        """
+    ),
+)

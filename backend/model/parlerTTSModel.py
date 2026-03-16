@@ -94,6 +94,12 @@ class ParlerTTSModel(SoundEffectsModel):
             audio_arr = cls.generate(prompt, description)
             audio_arrs.append(audio_arr)
         return audio_arrs
+    
+    @classmethod
+    def get_sample_rate(cls):
+        if cls._instance is None:
+            cls.get_instance()
+        return cls._instance.config.sampling_rate
 
 
 # Testing        
