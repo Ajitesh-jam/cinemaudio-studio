@@ -72,6 +72,7 @@ class CinematicMixPredictor(nn.Module):
         )
         self.norm_2 = nn.LayerNorm(embed_dim)
 
+        self.head_ln = nn.LayerNorm(embed_dim)
         # FFN on class token output -> [start_time, weight_db, duration]
         self.ffn = nn.Sequential(
             nn.Linear(embed_dim, 512),
@@ -163,20 +164,23 @@ class CinematicMixPredictor(nn.Module):
 
         class_token_out = tokens[:, 1, :]  # Class token has attended to story + timeline
         class_token_out = class_token_out + class_tok.squeeze(1)  # residual by class embedding
-        output = self.ffn(class_token_out)
+        output = self.ffn(self.head_ln(class_token_out))
 
         if single:
             output = output.squeeze(0)
         return output
     
     
-    def train_model(self, dataloader, epochs=50, learning_rate=0.001):
+    def train_model(self, dataloader, epochs=50, learning_rate=5e-4, grad_clip=1.0):
         """
-        Train with targets normalized to [-1, 1]. Batches are (story_emb, class_emb, timeline_seq, key_padding_mask, targets).
+        Train with targets normalized to [-1, 1]. Uses LR scheduler and gradient clipping for stable convergence.
         """
         self.train()
         mse_fn = nn.MSELoss(reduction="mean")
         optimizer = Adam(self.parameters(), lr=learning_rate)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-5
+        )
         losses = []
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -209,6 +213,8 @@ class CinematicMixPredictor(nn.Module):
                 loss = loss_start + loss_weight + loss_duration
 
                 loss.backward()
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=grad_clip)
                 optimizer.step()
 
                 epoch_loss += loss.item()
@@ -230,14 +236,15 @@ class CinematicMixPredictor(nn.Module):
             avg_weight = epoch_loss_weight / n
             avg_duration = epoch_loss_duration / n
             losses.append(avg_loss)
-
+            scheduler.step(avg_loss)
+            current_lr = optimizer.param_groups[0]["lr"]
             logger.info(
-                "Epoch %d/%d | loss=%.4f (start=%.4f, weight_db=%.4f, duration=%.4f) | batches=%d",
-                epoch + 1, epochs, avg_loss, avg_start, avg_weight, avg_duration, num_batches,
+                "Epoch %d/%d | loss=%.4f (start=%.4f, weight_db=%.4f, duration=%.4f) | lr=%.2e | batches=%d",
+                epoch + 1, epochs, avg_loss, avg_start, avg_weight, avg_duration, current_lr, num_batches,
             )
             print(
                 f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f} "
-                f"(start: {avg_start:.4f}, weight_db: {avg_weight:.4f}, duration: {avg_duration:.4f})"
+                f"(start: {avg_start:.4f}, weight_db: {avg_weight:.4f}, duration: {avg_duration:.4f}), lr: {current_lr:.2e}"
             )
 
         return losses
@@ -292,46 +299,7 @@ class CinematicMixPredictor(nn.Module):
         time_tensor = torch.tensor(times, dtype=torch.float32, device=self.device)
         return torch.cat([word_embs, time_tensor], dim=1)
 
-    def predict(
-        self,
-        story_prompt: str,
-        audio_classes: List[str],
-        narrator_audio_base64: str,
-        scene_duration: float = 10.0,
-    ):
-        """
-        Takes the story and a list of sounds to generate parameters for.
-        Uses full Whisper timeline; no rule-based BGM/SFX anchoring.
-        """
-        self.eval()
-        results: List[Any] = []
-        whisper_json = self.make_whisper_embedding(story_prompt, narrator_audio_base64)
-        timeline_seq = self.get_whisper_sequence_tensor(whisper_json or [], scene_duration)
-
-        story_emb = self.embedder.encode(
-            story_prompt,
-            convert_to_tensor=True,
-            device=str(self.device),
-        )
-
-        with torch.no_grad():
-            for audio_class in audio_classes:
-                class_emb = self.embedder.encode(
-                    audio_class,
-                    convert_to_tensor=True,
-                    device=str(self.device),
-                )
-                output = self(story_emb, class_emb, timeline_seq)  # single cue, returns [3]
-                s, w, d = output[0].item(), output[1].item(), output[2].item()
-                s_orig, w_orig, d_orig = denormalize_outputs(s, w, d)
-                logger.info(
-                    "Results: start_time_sec=%s weight_db=%s duration_sec=%s for audio_class=%s",
-                    s_orig, w_orig, d_orig, audio_class,
-                )
-                results.append([s_orig, w_orig, d_orig])
-
-        return results
-
+    
     def predict_from_dsp(
         self,
         story_prompt: str,

@@ -135,7 +135,7 @@ class TimelineDataset(Dataset):
         return self.samples[idx]
 
 
-def train_model(epochs=50, learning_rate=0.001):
+def train_model(epochs=50, learning_rate=5e-4):
     dataset = load_dataset()
     logger.info("[train_model] Loaded dataset with %d entries", len(dataset))
     model = CinematicMixPredictor()
@@ -219,5 +219,5 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    train_model(epochs=100, learning_rate=0.001)
+    train_model(epochs=100, learning_rate=5e-4)
     
