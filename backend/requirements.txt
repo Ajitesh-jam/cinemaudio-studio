@@ -68,7 +68,7 @@ laion_clap
 
 elevenlabs==2.38.1
 
-sentence_transformers==5.30.0
+sentence_transformers==5.3.0
 
 # install models from github
 # TangoFlux must be installed from GitHub

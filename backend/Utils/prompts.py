@@ -44,7 +44,8 @@ Return ONLY a JSON array with these exact fields:
 """
     ),
 )
-gemini_audio_prompt_with_narrator = PromptTemplate(
+
+gemini_audio_prompt_with_narrator_without_movie_bgms = PromptTemplate(
     input_variables=["story_text", "speed_wps"],
     template=(
         """
@@ -117,11 +118,93 @@ For Overlaps: If a new AMBIENCE starts, the previous one of the same type should
 
 weight_db: volume adjustment (-15.0 to 6.0). 6.0 = "Defeaning/Loud".
 
+### 5. OUTPUT CONSTRAINTS
+
+JSON ONLY: No conversational filler.
+
+Keep as many audio cues as you want to cover full story into audio. Focus on story context try to find audio sources, what music or sfx should be included in the story.
+
+Narrator Object: Include a single narrator_description at the root.
+
+### EXAMPLE OF EXPECTED ANALYSIS Story: "The door creaked open. Rain lashed against the window as he stepped into the cold hall." (Speed: 2 wps)
+
+JSON
+
+{{
+
+  "audio_cues": [
+    {{
+        "story": " The part of the story that the narrator will read with given descrpition , make sure to include pauses and breaks as per the narrator description
+        
+        # you might break story into multiple parts and make seprate audio cues for each part
+        ", 
+        "narrator_description": "Tapan speaks at a moderate pace with a low-pitched, gravelly tone to convey mystery. Clear, close-sounding recording with a cold, detached emotional depth",
+        ##### audio que for narrator to know how to read the story
+        "audio_type": "NARRATOR",
+        "start_time_ms": 0,
+        "duration_ms": duration_ms,
+    }},
+    {{
+      "audio_class": "Heavy wooden door creaking open slowly with high-frequency friction",
+      "audio_type": "SFX",
+      "word_index": 1,
+      "start_time_ms": 500,
+      "duration_ms": 1500,
+      "weight_db": 2.0
+    }},
+    {{
+      "audio_class": "Heavy rain hitting glass window with distant thunder rumbles",
+      "audio_type": "AMBIENCE",
+      "word_index": 4,
+      "start_time_ms": 2000,
+      "duration_ms": 8000,
+      "weight_db": -5.0
+    }},
+    {{
+      "audio_class": "Dark cinematic suspense pad with low synth drones",
+      "audio_type": "MUSIC",
+      "word_index": 10,
+      "start_time_ms": 5000,
+      "duration_ms": 10000,
+      "weight_db": 0.0
+    }},
+   
+  ]
+}}
+
+"""
+    ),
+)
+
+
+gemini_add_movie_bgms = PromptTemplate(
+    input_variables=["story_text", "speed_wps", "movie_bgms_csv","already_added_audio_cues"],
+    template=(
+        """
+You are specialized agent good at analyzing stories and extracting audio sources (audio cues) with precise timing based on reading speed.
+Analyze this story for cinematic sound design. Extract audio cues with precise timing based on reading speed.
+
+Story: {story_text}
+Reading Speed: {speed_wps} words per second
+Total Story Words: Count the words in the story
+Cinematic Master Model: Story Analysis & Sync Prompt
+Role & Expertise: You are a expert movie background music retriever. You need to retrieve the movie background music that best fits the story and add it to the story to make it more cinematic.
+
+we have already added some audio cues to the story, so you need to add movie bgm to the story and make sure to not overlap with the already added audio cues.
+
+Already added audio cues: {already_added_audio_cues}
+
+
+###################### ITS NOT AT ALL NECESSARY TO HAVE MOVIE BGM IN THE STORY. IF YOU FEEL IT IS NOT NECESSARY, YOU CAN SKIP IT. ######################
+
+For adding movie bgm, you need to follow the following rules:
+MOVIE_BGM (Movie Background Music): Sets the mood of the scene (e.g., "Heroic soundtrack"). Duration: 2000ms–10000ms. This will be retrieved from the movie bgms data. So it might not be excatly match to description or story context.
 
 ### 4. MOVIE BGM RETRIEVAL
 You must identify the movie bgm that best fits the story. Use the following movie bgms data to choose the best one:
 {movie_bgms_csv}
 
+Identify what best sound fits to the story from above data and add it to the story. like 
 
 audio_class: The audio path of the movie bgm you feel is best suited from the data.
 audio_type: "MOVIE_BGM".
@@ -134,6 +217,8 @@ Try to keep the duration_ms as close to the original movie bgm duration as possi
 Also if you choose a movie bgm from the data, you must force the audio_type to be "MOVIE_BGM" and you need to turn off the Music cue by model, ie at a time either you have movie bgm or music cue, not both.
 
 ### IMPORTANT: Its not at all necessary to have movie bgm in the story. If you feel it is not necessary, you can skip it.###
+
+You might also remove some musical elements which you don't feel necessary to be included in story after addgint the movie bgm or you can return the already added audio cues as it is.
 
 ### 5. OUTPUT CONSTRAINTS
 
@@ -161,38 +246,16 @@ JSON
         "start_time_ms": 0,
         "duration_ms": duration_ms,
     }},
+    must include already Added audio cues in the story.
+    and follow below to add movie bgms
      {{
-      "audio_class": "Audio file path of the audio cue",
+      "audio_class": "Audio file path of the movie bgm you feel is best suited from the data.",
       "audio_type": "MOVIE_BGM", # FORCE TO BE MOVIE_BGM if you take movie bgm from the data
-      "word_index": 15,
-      "start_time_ms": 10000,
-      "duration_ms": 10000,
-      "weight_db": 0.0
+      "start_time_ms": 10000,# best start time according to you when the movie bgm should start
+      "duration_ms": 10000,# best duration according to you when the movie bgm should end, try to keep it as close to the original movie bgm duration as possible.
+      "weight_db": 0.0 # best weight db/loudness according to you when the movie bgm should be played
     }},
-    {{
-      "audio_class": "Heavy wooden door creaking open slowly with high-frequency friction",
-      "audio_type": "SFX",
-      "word_index": 1,
-      "start_time_ms": 500,
-      "duration_ms": 1500,
-      "weight_db": 2.0
-    }},
-    {{
-      "audio_class": "Heavy rain hitting glass window with distant thunder rumbles",
-      "audio_type": "AMBIENCE",
-      "word_index": 4,
-      "start_time_ms": 2000,
-      "duration_ms": 8000,
-      "weight_db": -5.0
-    }},
-    {{
-      "audio_class": "Dark cinematic suspense pad with low synth drones",
-      "audio_type": "MUSIC",
-      "word_index": 10,
-      "start_time_ms": 5000,
-      "duration_ms": 10000,
-      "weight_db": 0.0
-    }},
+
    
   ]
 }}

@@ -18,7 +18,10 @@ import warnings
 from numpy import True_
 from Variable.dataclases import AudioCue, NarratorCue, Cue
 from Variable.configurations import MODIFIER_WORDS, DEFAULT_WEIGHT_DB, DEFAULT_SFX_DURATION_MS
-from Utils.prompts import gemini_audio_prompt, gemini_audio_prompt_with_narrator
+from Utils.prompts import (
+    gemini_audio_prompt_with_narrator_without_movie_bgms,
+    gemini_add_movie_bgms,
+)
 import math
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
@@ -319,10 +322,53 @@ def _extract_audio_cues_simple(story_text: str, speed_wps: float):
     
     return cues_to_play, total_duration_ms
 
+def _parse_gemini_cues(response_text) -> List[Dict]:
+    """
+    Parse Gemini response into a list of cue dicts.
+    Handles raw lists, dicts with 'audio_cues'/'cues'/'results',
+    or JSON strings (optionally wrapped in markdown).
+    """
+    # Already-parsed structures
+    if isinstance(response_text, list):
+        return response_text
+
+    if isinstance(response_text, dict):
+        cues = (
+            response_text.get("audio_cues")
+            or response_text.get("cues")
+            or response_text.get("results")
+        )
+        return cues if isinstance(cues, list) else []
+
+    # Fallback: string with JSON content (possibly in ```json``` fences)
+    if not isinstance(response_text, str):
+        return []
+
+    json_str = response_text.replace("```json", "").replace("```", "").strip()
+    json_match = re.search(r"\[[\s\S]*?\]", json_str)
+    if json_match:
+        json_str = json_match.group()
+
+    try:
+        parsed = json.loads(json_str)
+    except Exception:
+        logger.error("Failed to parse Gemini JSON response")
+        return []
+
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        cues = parsed.get("audio_cues") or parsed.get("cues") or parsed.get("results")
+        return cues if isinstance(cues, list) else []
+    return []
 
 
-
-def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = True):
+def query_gemini(
+    story_text: str,
+    speed_wps: float,
+    narrator_enabled: bool = True,
+    movie_bgms_enabled: bool = True,
+):
     # if not GEMINI_AVAILABLE:
     #     logger.warning("Gemini API not available")
     #     return None
@@ -332,69 +378,149 @@ def query_gemini(story_text: str, speed_wps: float, narrator_enabled: bool = Tru
         logger.warning("GEMINI_API_KEY not found in environment variables. Set it with: export GEMINI_API_KEY='your-key'")
         return None
     try:
-        prompt = None
-        if narrator_enabled:
-            try:
-                movie_bgms_csv = read_movie_bgms_csv()
-                # Use format_prompt() for langchain PromptTemplate, then convert to string
-                prompt_value = gemini_audio_prompt_with_narrator.format_prompt(story_text=story_text, speed_wps=speed_wps, movie_bgms_csv=movie_bgms_csv)
-                prompt = prompt_value.to_string()
-            except Exception as e:
-                logger.error(f"Error formatting prompt: {e}", exc_info=True)
-                return None
-        else:
-            try:
-                prompt_value = gemini_audio_prompt.format_prompt(story_text=story_text, speed_wps=speed_wps)
-                prompt = prompt_value.to_string()
-            except Exception as e:
-                logger.error(f"Error formatting prompt: {e}", exc_info=True)
-                return None
-        if not prompt:
-            logger.error("No prompt found")
-            return None
-       
-        model_name = 'gemini-3-flash-preview'
-        response_text = None
+        model_name = "gemini-3-flash-preview"
+
+        # -------- Stage 1: Base cues (SFX/AMBIENCE/MUSIC/NARRATOR), NO movie BGMs --------
         try:
-            response = query_llm(llm_name="gemini", model_name=model_name, prompt=prompt)
-            response_text = response
+            prompt_value = gemini_audio_prompt_with_narrator_without_movie_bgms.format_prompt(
+                story_text=story_text,
+                speed_wps=speed_wps,
+            )
+            prompt = prompt_value.to_string()
         except Exception as e:
-            logger.error(f"\n\nModel {model_name} failed: {e}\n\n")
-            return None
-        
-        if not response_text:
-            logger.error("No available Gemini model found")
+            logger.error(f"Error formatting base audio prompt: {e}", exc_info=True)
             return None
 
-        # query_llm may return already-parsed dict/list; downstream expects a list of cues
-        if isinstance(response_text, list):
-            return response_text
-        if isinstance(response_text, dict):
-            cues = (
-                response_text.get("audio_cues")
-                or response_text.get("cues")
-                or response_text.get("results")
+        base_response = None
+        try:
+            base_response = query_llm(
+                llm_name="gemini", model_name=model_name, prompt=prompt
             )
-            if isinstance(cues, list):
-                return cues
-            return []
-        # Otherwise it's a string: clean markdown and parse
-        json_str = response_text.replace("```json", "").replace("```", "").strip()
-        json_match = re.search(r'\[[\s\S]*?\]', json_str)
-        if json_match:
-            json_str = json_match.group()
-        parsed = json.loads(json_str)
-        if isinstance(parsed, list):
-            return parsed
-        if isinstance(parsed, dict):
-            cues = parsed.get("audio_cues") or parsed.get("cues") or parsed.get("results")
-            return cues if isinstance(cues, list) else []
-        return []
+        except Exception as e:
+            logger.error(f"\n\nModel {model_name} failed on base cues: {e}\n\n")
+            return None
+
+        if not base_response:
+            logger.error("Gemini base audio prompt returned empty response")
+            return None
+
+        audio_cues: List[Dict] = _parse_gemini_cues(base_response)
+
+        # -------- Stage 2: Optional movie BGMs, conditioned on existing cues --------
+        if movie_bgms_enabled:
+            try:
+                movie_bgms_csv = read_movie_bgms_csv()
+                prompt_value = gemini_add_movie_bgms.format_prompt(
+                    story_text=story_text,
+                    speed_wps=speed_wps,
+                    movie_bgms_csv=movie_bgms_csv,
+                    already_added_audio_cues=audio_cues,
+                )
+                prompt = prompt_value.to_string()
+            except Exception as e:
+                logger.error(
+                    f"Error formatting movie BGM prompt: {e}", exc_info=True
+                )
+                # If movie-BGM prompt fails, still return base cues
+                return audio_cues
+
+            movie_response = None
+            try:
+                movie_response = query_llm(
+                    llm_name="gemini", model_name=model_name, prompt=prompt
+                )
+            except Exception as e:
+                logger.error(
+                    f"\n\nModel {model_name} failed on movie BGMs: {e}\n\n"
+                )
+                return audio_cues
+
+            if movie_response:
+                movie_cues = _parse_gemini_cues(movie_response)
+                # movie prompt returns full merged list (base + MOVIE_BGM) or empty;
+                # prefer movie_cues when non-empty, otherwise keep base audio_cues.
+                if isinstance(movie_cues, list) and movie_cues:
+                    audio_cues = movie_cues
+
+        return audio_cues
     except Exception as e:
         logger.error(f"Gemini Error: {e}")
         return None
 
-def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool = True):
+
+def local_llm_fallback(story_text: str, speed_wps: float):
+    """
+    Uses local LLM to decide audio cues with precise timing based on reading speed.
+    """
+    logger.info(f"[DECIDER] Starting Local LLM Fallback...")
+
+    # Extract cues directly from story using keyword matching
+    story_lower = story_text.lower()
+    words_list = story_text.split()
+
+    words = story_text.split()
+    total_duration_ms = math.ceil((len(words) / speed_wps) * 1000)
+
+    sound_keywords = {
+        'rain': ('rain falling', 'AMBIENCE', ['rain', 'raining', 'rainy', 'raindrop']),
+        'dog': ('dog barking', 'SFX', ['dog', 'barking', 'bark', 'barked']),
+        'run': ('footsteps running', 'SFX', ['run', 'ran', 'running', 'runs']),
+        'shelter': ('shelter ambience', 'AMBIENCE', ['shelter', 'roof', 'indoors']),
+        'loud': ('loud sound', 'SFX', ['loud', 'loudly']),
+        'suddenly': ('dramatic stinger', 'MUSIC', ['suddenly', 'sudden', 'abrupt']),
+        'started': ('sound starting', 'SFX', ['started', 'start', 'began']),
+        'heard': ('sound heard', 'SFX', ['heard', 'hear', 'hearing']),
+    }
+
+    found_sounds = {}
+    for key, (audio_class, audio_type, keywords) in sound_keywords.items():
+        for i, word in enumerate(words_list):
+            word_lower = word.lower().strip('.,!?;:')
+            if any(kw in word_lower for kw in keywords):
+                if key not in found_sounds or i < found_sounds[key]['word_index']:
+                    found_sounds[key] = {
+                        'audio_class': audio_class,
+                        'audio_type': audio_type,
+                        'word_index': i,
+                        'keywords': keywords
+                    }
+
+    gemini_cues = []
+    for key, sound_info in found_sounds.items():
+        # Calculate timing based on reading speed
+        word_idx = sound_info['word_index']
+        start_ms = math.ceil((word_idx / speed_wps) * 1000)
+
+        # Determine duration based on audio type
+        if sound_info['audio_type'] == 'SFX':
+            duration_ms = 2000  # Default 2 seconds for SFX
+        elif sound_info['audio_type'] == 'AMBIENCE':
+            # AMBIENCE continues until end of story
+            duration_ms = max(1000, total_duration_ms - start_ms)
+        else:  # MUSIC
+            duration_ms = 5000  # Default 5 seconds for MUSIC
+
+        weight_db = 0.0
+        if 'loud' in story_lower and word_idx < len(words_list):
+            for j in range(max(0, word_idx - 2), min(len(words_list), word_idx + 3)):
+                if 'loud' in words_list[j].lower():
+                    weight_db = 6.0
+                    break
+
+        gemini_cues.append({
+            "audio_class": sound_info['audio_class'],
+            "audio_type": sound_info['audio_type'],
+            "word_index": word_idx,
+            "start_time_ms": start_ms,
+            "duration_ms": duration_ms,
+            "weight_db": weight_db
+        })
+
+    if gemini_cues:
+        logger.info(f"Fallback extracted {len(gemini_cues)} cues from keyword matching")
+    return gemini_cues
+
+def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool = True, movie_bgms_enabled: bool = True):
     """
     Uses LLM to decide audio cues with precise timing based on reading speed.
     The LLM provides start_time_ms and duration_ms calculated from word positions.
@@ -405,76 +531,12 @@ def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool =
     total_duration_ms = math.ceil((len(words) / speed_wps) * 1000)
     
     # Step A: Try Gemini first, then fallback to local LLM
-    gemini_cues = query_gemini(story_text, speed_wps, narrator_enabled)
+    gemini_cues = query_gemini(story_text, speed_wps, narrator_enabled, movie_bgms_enabled)
     
-    # If Gemini fails, try local LLM with keyword extraction
-    if not gemini_cues:
-        logger.info("Gemini failed, trying local LLM fallback...")
-        # Extract cues directly from story using keyword matching
-        story_lower = story_text.lower()
-        words_list = story_text.split()
-        
-        sound_keywords = {
-            'rain': ('rain falling', 'AMBIENCE', ['rain', 'raining', 'rainy', 'raindrop']),
-            'dog': ('dog barking', 'SFX', ['dog', 'barking', 'bark', 'barked']),
-            'run': ('footsteps running', 'SFX', ['run', 'ran', 'running', 'runs']),
-            'shelter': ('shelter ambience', 'AMBIENCE', ['shelter', 'roof', 'indoors']),
-            'loud': ('loud sound', 'SFX', ['loud', 'loudly']),
-            'suddenly': ('dramatic stinger', 'MUSIC', ['suddenly', 'sudden', 'abrupt']),
-            'started': ('sound starting', 'SFX', ['started', 'start', 'began']),
-            'heard': ('sound heard', 'SFX', ['heard', 'hear', 'hearing']),
-        }
-        
-        found_sounds = {}
-        for key, (audio_class, audio_type, keywords) in sound_keywords.items():
-            for i, word in enumerate(words_list):
-                word_lower = word.lower().strip('.,!?;:')
-                if any(kw in word_lower for kw in keywords):
-                    if key not in found_sounds or i < found_sounds[key]['word_index']:
-                        found_sounds[key] = {
-                            'audio_class': audio_class,
-                            'audio_type': audio_type,
-                            'word_index': i,
-                            'keywords': keywords
-                        }
-        
-        gemini_cues = []
-        for key, sound_info in found_sounds.items():
-            # Calculate timing based on reading speed
-            word_idx = sound_info['word_index']
-            start_ms = math.ceil((word_idx / speed_wps) * 1000)
-            
-            # Determine duration based on audio type
-            if sound_info['audio_type'] == 'SFX':
-                duration_ms = 2000  # Default 2 seconds for SFX
-            elif sound_info['audio_type'] == 'AMBIENCE':
-                # AMBIENCE continues until next AMBIENCE or end
-                duration_ms = max(1000, total_duration_ms - start_ms)
-            else:  # MUSIC
-                duration_ms = 5000  # Default 5 seconds for MUSIC
-            
-            weight_db = 0.0
-            if 'loud' in story_lower and word_idx < len(words_list):
-                for j in range(max(0, word_idx - 2), min(len(words_list), word_idx + 3)):
-                    if 'loud' in words_list[j].lower():
-                        weight_db = 6.0
-                        break
-            
-            gemini_cues.append({
-                "audio_class": sound_info['audio_class'],
-                "audio_type": sound_info['audio_type'],
-                "word_index": word_idx,
-                "start_time_ms": start_ms,
-                "duration_ms": duration_ms,
-                "weight_db": weight_db
-            })
-        
-        if gemini_cues:
-            logger.info(f"Fallback extracted {len(gemini_cues)} cues from keyword matching")
     
     if not gemini_cues:
-        print("[ERROR] AI Decider failed. Falling back to empty.")
-        return [], total_duration_ms
+        gemini_cues = local_llm_fallback(story_text, speed_wps)
+
 
     final_cues: List[Cue] = []
     last_cue_idx = {"AMBIENCE": -1, "MUSIC": -1}
@@ -568,8 +630,7 @@ def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool =
 
     logger.info(f"[DECIDER] Successfully generated {len(final_cues)} cinematic cues with LLM-provided timing.")
     return final_cues, total_duration_ms
-
-    
+   
 def decide_audio_cues(story_text: str, speed_wps: float):
     """
     Parses the story text using LLM and creates a timed list of AudioCues.
