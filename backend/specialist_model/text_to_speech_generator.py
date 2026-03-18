@@ -2,6 +2,7 @@ import torch
 from transformers.trainer_utils import set_seed
 import logging
 from helper.lib import get_model
+from Variable.configurations import model_config
 logger = logging.getLogger(__name__)
 
 def text_to_speech_generator(prompt: str, description: str):
@@ -33,7 +34,7 @@ def text_to_speech_generator(prompt: str, description: str):
     #     else:
     #         audio_arr = generation.cpu().numpy().squeeze()  # type: ignore[union-attr]
     # return audio_arr
-    model = get_model("parlertts")
+    model = get_model(model_config.narrator_model_name)
     audio_arr = model.generate(prompt, description)
     return audio_arr
 

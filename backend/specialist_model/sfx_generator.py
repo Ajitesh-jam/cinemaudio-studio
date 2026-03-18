@@ -16,11 +16,11 @@
 from helper.lib import get_model
 from pydub import AudioSegment
 import logging
-from Variable.configurations import STEPS, SFX_RATE
-from Variable.configurations import TANGO2
-logger = logging.getLogger(__name__)
 
-def sfx_generator(prompt: str, duration_ms: int, model_name: str = TANGO2):
+logger = logging.getLogger(__name__)
+from Variable.configurations import STEPS, SFX_RATE, model_config
+
+def sfx_generator(prompt: str, duration_ms: int):
     """Generates a short sound effect using the specified model.
 
     Args:
@@ -28,10 +28,10 @@ def sfx_generator(prompt: str, duration_ms: int, model_name: str = TANGO2):
         duration_ms: Target duration in milliseconds.
         model_name: One of "TangoFlux", "ElevenLabs", or "Tango2" (default: Tango2).
     """
-    logger.info(f"Generating: '{prompt}' ({duration_ms}ms) with model={model_name}")
+    logger.info(f"Generating: '{prompt}' ({duration_ms}ms) with model={model_config.sfx_model_name}")
 
     duration_s = int(duration_ms / 1000.0)
-    model_cls = get_model(model_name)
+    model_cls = get_model(model_config.sfx_model_name)
     audio_arr = model_cls.generate(prompt, steps=STEPS, duration=duration_s)
 
     if audio_arr is None :
@@ -53,7 +53,7 @@ def sfx_generator(prompt: str, duration_ms: int, model_name: str = TANGO2):
     )
     return segment
 
-def sfx_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2):
+def sfx_generator_for_batch(prompts: list[str], duration_ms: int):
     """Generates a short sound effect using the specified model.
 
     Args:
@@ -61,6 +61,7 @@ def sfx_generator_for_batch(prompts: list[str], duration_ms: int, model_name: st
         duration_ms: Target duration in milliseconds.
         model_name: One of "TangoFlux", "ElevenLabs", or "Tango2" (default: Tango2).
     """
+    model_name = model_config.sfx_model_name
     logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms with model={model_name}")
 
     duration_s = int(duration_ms / 1000.0)

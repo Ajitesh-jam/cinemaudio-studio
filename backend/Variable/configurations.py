@@ -67,10 +67,30 @@ MUSIC_MODEL = TANGO2
 
 
 class ModelConfig:
+    
+    @classmethod
+    def get_instance(cls):
+        if not hasattr(cls, "_instance"):
+            cls._instance = ModelConfig()
+        return cls._instance
+    
     def __init__(self):
-       self.fill_coverage_by_llm = True
-       self.use_dsp = True  
-       self.use_llm_to_predict_align = False
-       self.use_dsp_to_predict_align = False
-       self.use_avg_llm_and_dsp_to_predict_align = True
-       self.use_dl_based_llm_and_dsp_alignment_predictor = False
+        self.sfx_model_name = TANGO2
+        self.env_model_name = TANGO2
+        self.music_model_name = TANGO2
+        self.narrator_model_name = "parlertts"
+            
+        self.fill_coverage_by_llm = True
+        self.use_dsp = True  
+        
+        self.use_movie_bgms = True
+        self.use_narrator = True
+        self.decide_audio_model_name = "gemini-3-flash-preview"
+        
+        self.use_llm_to_predict_align = False
+        self.use_dsp_to_predict_align = False
+        self.use_avg_llm_and_dsp_to_predict_align = True
+        self.use_dl_based_llm_and_dsp_alignment_predictor = False
+        
+        
+model_config = ModelConfig.get_instance()        

@@ -2,9 +2,8 @@ import logging
 import numpy as np
 from pydub import AudioSegment
 
-from Variable.configurations import STEPS, EMOTIONAL_RATE, EMOTIONAL_GAIN
+from Variable.configurations import STEPS, EMOTIONAL_RATE, model_config
 from helper.lib import get_model
-from Variable.configurations import TANGO2
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +12,7 @@ def emotional_music_generator(prompt: str, duration_ms: int):
     logger.info(f"Generating: '{prompt}' ({duration_ms}ms)")
 
     duration_s = int(duration_ms / 1000.0)
-    audio_arr = get_model(TANGO2).generate(prompt, steps=STEPS, duration=duration_s)
+    audio_arr = get_model(model_config.music_model_name).generate(prompt, steps=STEPS, duration=duration_s)
 
     if audio_arr is None :
         raise ValueError(
@@ -36,11 +35,11 @@ def emotional_music_generator(prompt: str, duration_ms: int):
     )
     return segment
 
-def emotional_music_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2):
+def emotional_music_generator_for_batch(prompts: list[str], duration_ms: int):
     """Generates a background music track for a batch of prompts."""
     logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms")
     duration_s = int(duration_ms / 1000.0)
-    model_cls = get_model(model_name)
+    model_cls = get_model(model_config.music_model_name)
     audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s)
     if audio_arr is None :
         raise ValueError(f"Failed to generate audio for batch of {len(prompts)} prompts. Model returned empty array.")

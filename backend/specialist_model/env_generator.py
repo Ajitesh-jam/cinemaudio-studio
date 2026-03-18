@@ -12,15 +12,14 @@ import logging
 import numpy as np
 from pydub import AudioSegment
 from helper.lib import get_model
-from Variable.configurations import STEPS, ENV_RATE, ENV_GAIN
-from Variable.configurations import TANGO2
+from Variable.configurations import STEPS, ENV_RATE, ENV_GAIN, model_config
 logger = logging.getLogger(__name__)
 
 def environment_generator(prompt: str, duration_ms: int):
     """Generates an ambient environmental sound."""
     logger.info(f"Generating: '{prompt}' ({duration_ms}ms)")
     duration_s = int(duration_ms / 1000.0)
-    audio_arr = get_model(TANGO2).generate(prompt, steps=STEPS, duration=duration_s)
+    audio_arr = get_model(model_config.env_model_name).generate(prompt, steps=STEPS, duration=duration_s)
 
     if audio_arr is None :
         logger.error(
@@ -46,11 +45,11 @@ def environment_generator(prompt: str, duration_ms: int):
     return segment
 
 
-def environment_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2):
+def environment_generator_for_batch(prompts: list[str], duration_ms: int):
     """Generates an ambient environmental sound for a batch of prompts."""
     logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms")
     duration_s = int(duration_ms / 1000.0)
-    model_cls = get_model(model_name)
+    model_cls = get_model(model_config.env_model_name)
     audio_arr = []
     audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s)
     segments = [AudioSegment(
@@ -59,7 +58,7 @@ def environment_generator_for_batch(prompts: list[str], duration_ms: int, model_
         frame_rate=ENV_RATE,
         channels=1,
     ) for audio_arr_item in audio_arr]
-    return segments
+    return segments 
 
 # TESTING
 

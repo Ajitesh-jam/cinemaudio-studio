@@ -21,9 +21,8 @@ from model.word_aligner import WordAligner
 from Variable.dataclases import AudioCue
 from Utils.prompts import alignment_prediction_prompt
 from Utils.llm import query_llm
-from Variable.configurations import ModelConfig
+from Variable.configurations import model_config
 
-model_config = ModelConfig()
 cinematic_mix_predictor = CinematicMixPredictor()
 word_aligner_ins = WordAligner()
 

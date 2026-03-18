@@ -17,7 +17,7 @@ import warnings
 
 from numpy import True_
 from Variable.dataclases import AudioCue, NarratorCue, Cue
-from Variable.configurations import MODIFIER_WORDS, DEFAULT_WEIGHT_DB, DEFAULT_SFX_DURATION_MS
+from Variable.configurations import MODIFIER_WORDS, DEFAULT_WEIGHT_DB, DEFAULT_SFX_DURATION_MS,model_config
 from Utils.prompts import (
     gemini_audio_prompt_with_narrator_without_movie_bgms,
     gemini_add_movie_bgms,
@@ -42,7 +42,6 @@ load_dotenv(os.path.join(backend_dir, ".env"))
 logger = logging.getLogger(__name__)
 GEMINI_AVAILABLE = True
 USE_NEW_GENAI = True
-
 
 
 def _classify_audio_type(word: str, pos_tag: str, context: str = "") -> Tuple[str | None, str | None]:
@@ -362,25 +361,18 @@ def _parse_gemini_cues(response_text) -> List[Dict]:
         return cues if isinstance(cues, list) else []
     return []
 
-
 def query_gemini(
     story_text: str,
     speed_wps: float,
     narrator_enabled: bool = True,
     movie_bgms_enabled: bool = True,
 ):
-    # if not GEMINI_AVAILABLE:
-    #     logger.warning("Gemini API not available")
-    #     return None
-    
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         logger.warning("GEMINI_API_KEY not found in environment variables. Set it with: export GEMINI_API_KEY='your-key'")
         return None
     try:
-        model_name = "gemini-3-flash-preview"
-
-        # -------- Stage 1: Base cues (SFX/AMBIENCE/MUSIC/NARRATOR), NO movie BGMs --------
+        model_name = model_config.decide_audio_model_name
         try:
             prompt_value = gemini_audio_prompt_with_narrator_without_movie_bgms.format_prompt(
                 story_text=story_text,
@@ -446,7 +438,6 @@ def query_gemini(
     except Exception as e:
         logger.error(f"Gemini Error: {e}")
         return None
-
 
 def local_llm_fallback(story_text: str, speed_wps: float):
     """
@@ -631,7 +622,7 @@ def decide_audio_llm(story_text: str, speed_wps: float, narrator_enabled: bool =
     logger.info(f"[DECIDER] Successfully generated {len(final_cues)} cinematic cues with LLM-provided timing.")
     return final_cues, total_duration_ms
    
-def decide_audio_cues(story_text: str, speed_wps: float):
+def decide_audio_cues(story_text: str, speed_wps: float, narrator_enabled: bool = True, movie_bgms_enabled: bool = True):
     """
     Parses the story text using LLM and creates a timed list of AudioCues.
     Falls back to simple extraction if LLM fails.
@@ -640,7 +631,7 @@ def decide_audio_cues(story_text: str, speed_wps: float):
     logger.info(f"Reading Speed: {speed_wps} words/sec")
     
     try:
-        cues, total_duration = decide_audio_llm(story_text, speed_wps)
+        cues, total_duration = decide_audio_llm(story_text, speed_wps, narrator_enabled, movie_bgms_enabled)
         if not cues:
             logger.warning("LLM returned no cues, falling back to simple extraction...")
             raise Exception("Failed to generate audio cues with LLM")

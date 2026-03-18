@@ -1,21 +1,21 @@
-import os
-import sys
-# Add project root to path
-# import sys
 # import os
+# import sys
+# # Add project root to path
+# # import sys
+# # import os
 
-# # Get absolute path of project root (one level up from current notebook)
-project_root = os.path.abspath("..")
+# # # Get absolute path of project root (one level up from current notebook)
+# project_root = os.path.abspath("..")
 
-# # Add to sys.path if not already
-if project_root not in sys.path:
-    sys.path.append(project_root)
-print("Project root added to sys.path:", project_root)
+# # # Add to sys.path if not already
+# if project_root not in sys.path:
+#     sys.path.append(project_root)
+# print("Project root added to sys.path:", project_root)
     
-# Cinemaudio-studio root (for tango_new when using Tango2)
-cinema_studio_root = os.path.abspath(os.path.join(project_root, ".."))
-if cinema_studio_root not in sys.path:
-    sys.path.append(cinema_studio_root)    
+# # Cinemaudio-studio root (for tango_new when using Tango2)
+# cinema_studio_root = os.path.abspath(os.path.join(project_root, ".."))
+# if cinema_studio_root not in sys.path:
+#     sys.path.append(cinema_studio_root)    
 
 
 import base64

@@ -25,8 +25,7 @@ cinema_studio_root = os.path.abspath(os.path.join(project_root, "."))
 if cinema_studio_root not in sys.path:
     sys.path.append(cinema_studio_root)    
     
-from Variable.configurations import ModelConfig
-model_config = ModelConfig()
+from Variable.configurations import model_config
 
 # Import project-specific modules
 from Variable.dataclases import (
@@ -46,7 +45,7 @@ from Variable.dataclases import (
 )
 from helper.audio_conversions import dict_to_cue, audio_cue_to_dict
 from superimposition_model.superimposition_model import SuperimpositionModel
-from Variable.configurations import READING_SPEED_WPS, PARALLEL_EXECUTION, PARALLEL_WORKERS
+from Variable.configurations import READING_SPEED_WPS, model_config
 from Tools.decide_audio import decide_audio_cues
 from Evaluation.evaluator import AudioEvaluator
 from helper.audio_conversions import audio_to_base64
@@ -144,7 +143,9 @@ async def decide_audio_cues_handler(request: DecideCuesRequest):
         speed_wps = request.speed_wps if request.speed_wps is not None else READING_SPEED_WPS
         cues, total_duration = decide_audio_cues(
             request.story_text,
-            speed_wps
+            speed_wps,
+            narrator_enabled=model_config.use_narrator,
+            movie_bgms_enabled=model_config.use_movie_bgms
         )
         return DecideCuesResponse(
             cues=cues,
