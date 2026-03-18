@@ -93,4 +93,4 @@ class ModelConfig:
         self.use_dl_based_llm_and_dsp_alignment_predictor = False
         
         
-model_config = ModelConfig.get_instance()        
+model_config = ModelConfig.get_instance()

@@ -16,10 +16,8 @@ import logging
 from typing import List, Sequence, cast
 from Variable.dataclases import Cue, AudioCueWithAudioBase64, AudioCue
 from Tools.play_audio import create_audio_from_audiocue
-from helper.parallel_audio_generation import parallel_audio_generation
 from Tools.decide_audio import decide_audio_cues
-from Variable.configurations import READING_SPEED_WPS
-from helper.audio_conversions import base64_to_audio, audio_to_base64
+from helper.audio_conversions import base64_to_audio
 from Utils.prompts import prompt_to_fill_missing_audio_cues
 from Utils.llm import query_llm
 from helper.lib import read_movie_bgms_csv
