@@ -84,7 +84,7 @@ class ModelConfig:
         self.fill_coverage_by_llm = True
         self.use_dsp = True  
         
-        self.use_movie_bgms = True
+        self.use_movie_bgms = False
         self.use_narrator = True
         self.decide_audio_model_name = "gemini-3-flash-preview"
         

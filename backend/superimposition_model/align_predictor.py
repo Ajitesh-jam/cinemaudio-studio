@@ -22,9 +22,18 @@ from Variable.dataclases import AudioCue
 from Utils.prompts import alignment_prediction_prompt
 from Utils.llm import query_llm
 from Variable.configurations import model_config
+from superimposition_model.llm_dsp_weight_predictor import load_predictor
 
 cinematic_mix_predictor = CinematicMixPredictor()
 word_aligner_ins = WordAligner()
+_blend_alpha_predictor = None
+
+
+def _get_blend_alpha_predictor():
+    global _blend_alpha_predictor
+    if _blend_alpha_predictor is None:
+        _blend_alpha_predictor = load_predictor(train_if_missing=True)
+    return _blend_alpha_predictor
 
 
 def predict_from_llm(
@@ -131,10 +140,14 @@ def predict_avg_llm_and_dsp_align(
         audio_classes=audio_classes,
         whisper_json=whisper_json_list,
     )
-    alpha = 0.5
     blended: List[AudioCue] = []
+    alpha_predictor = _get_blend_alpha_predictor()
     for i, llm_cue in enumerate(llm_cues):
         dsp_cue = dsp_cues[i] if i < len(dsp_cues) else llm_cue
+        alpha = alpha_predictor.predict_alpha(
+            audio_type=getattr(llm_cue, "audio_type", ""),
+            audio_class=getattr(llm_cue, "audio_class", ""),
+        )
         blended.append(
             AudioCue(
                 id=llm_cue.id,
