@@ -241,7 +241,7 @@ class AudioDiffusion(nn.Module):
 
     @torch.no_grad()
     def inference(self, prompt, inference_scheduler, num_steps=20, guidance_scale=3, num_samples_per_prompt=1,
-                  disable_progress=True, duration=10.0):
+                  disable_progress=True, duration=10.0, progress_callback=None):
         device = self.text_encoder.device
         classifier_free_guidance = guidance_scale > 1.0
         batch_size = len(prompt) * num_samples_per_prompt
@@ -292,6 +292,11 @@ class AudioDiffusion(nn.Module):
             # call the callback, if provided
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % inference_scheduler.order == 0):
                 progress_bar.update(1)
+                if progress_callback is not None:
+                    try:
+                        progress_callback(progress_bar.n, num_steps)
+                    except Exception:
+                        pass
 
         if self.set_from == "pre-trained":
             latents = self.group_out(latents.permute(0, 2, 3, 1).contiguous()).permute(0, 3, 1, 2).contiguous()

@@ -45,13 +45,17 @@ def environment_generator(prompt: str, duration_ms: int):
     return segment
 
 
+<<<<<<< Updated upstream
 def environment_generator_for_batch(prompts: list[str], duration_ms: int):
+=======
+def environment_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2, progress_callback=None):
+>>>>>>> Stashed changes
     """Generates an ambient environmental sound for a batch of prompts."""
     logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms")
     duration_s = int(duration_ms / 1000.0)
     model_cls = get_model(model_config.env_model_name)
     audio_arr = []
-    audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s)
+    audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s, progress_callback=progress_callback)
     segments = [AudioSegment(
         data=audio_arr_item.tobytes(),
         sample_width=2,

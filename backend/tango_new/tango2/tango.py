@@ -64,7 +64,7 @@ class Tango:
         for i in range(0, len(lst), n):
             yield lst[i:i + n]
         
-    def generate(self, prompt, steps=100, guidance=3, samples=1, disable_progress=False, duration=10.0):
+    def generate(self, prompt, steps=100, guidance=3, samples=1, disable_progress=False, duration=10.0, progress_callback=None):
         """Generate audio for a single prompt string.
 
         Args:
@@ -76,12 +76,21 @@ class Tango:
             duration: Target duration of the generated audio in seconds (e.g. 3.0, 5.0, 10.0).
         """
         with torch.no_grad():
-            latents = self.model.inference([prompt], self.scheduler, steps, guidance, samples, disable_progress=disable_progress, duration=duration)
+            latents = self.model.inference(
+                [prompt],
+                self.scheduler,
+                steps,
+                guidance,
+                samples,
+                disable_progress=disable_progress,
+                duration=duration,
+                progress_callback=progress_callback,
+            )
             mel = self.vae.decode_first_stage(latents)
             wave = self.vae.decode_to_waveform(mel)
         return wave[0]
 
-    def generate_for_batch(self, prompts, steps=100, guidance=3, samples=1, batch_size=8, disable_progress=False, duration=10.0):
+    def generate_for_batch(self, prompts, steps=100, guidance=3, samples=1, batch_size=8, disable_progress=False, duration=10.0, progress_callback=None):
         """Generate audio for a list of prompt strings.
 
         Args:
@@ -106,7 +115,16 @@ class Tango:
         for k in pbar:
             batch = prompts[k: k+batch_size]
             with torch.no_grad():
-                latents = self.model.inference(batch, self.scheduler, steps, guidance, samples, disable_progress=disable_progress, duration=duration)
+                latents = self.model.inference(
+                    batch,
+                    self.scheduler,
+                    steps,
+                    guidance,
+                    samples,
+                    disable_progress=disable_progress,
+                    duration=duration,
+                    progress_callback=progress_callback,
+                )
                 mel = self.vae.decode_first_stage(latents)
                 wave = self.vae.decode_to_waveform(mel)
                 outputs += [item for item in wave]

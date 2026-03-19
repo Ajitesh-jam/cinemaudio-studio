@@ -53,7 +53,11 @@ def sfx_generator(prompt: str, duration_ms: int):
     )
     return segment
 
+<<<<<<< Updated upstream
 def sfx_generator_for_batch(prompts: list[str], duration_ms: int):
+=======
+def sfx_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2, progress_callback=None):
+>>>>>>> Stashed changes
     """Generates a short sound effect using the specified model.
 
     Args:
@@ -67,7 +71,7 @@ def sfx_generator_for_batch(prompts: list[str], duration_ms: int):
     duration_s = int(duration_ms / 1000.0)
     model_cls = get_model(model_name)
     audio_arr = []
-    audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s)
+    audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s, progress_callback=progress_callback)
 
     segments = [AudioSegment(
         data=audio_arr_item.tobytes(),

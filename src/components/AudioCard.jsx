@@ -21,6 +21,7 @@ const AudioCard = memo(({
   fade_ms = 500,
   audioBase64 = null,
   audio_base64 = null,
+  progressPercent = undefined,
   isRegenerating = false,
   handleUpdate = () => { },
   onRegenerate = () => { },
@@ -54,6 +55,7 @@ const AudioCard = memo(({
   // Get audio data from either prop name (treat empty string as "no audio yet")
   const audioData = audioBase64 ?? audio_base64;
   const isRegeneratingEffective = isRegenerating || isRegeneratingLocal;
+  const progressValue = typeof progressPercent === "number" ? Math.max(0, Math.min(100, progressPercent)) : null;
 
   // Convert duration_ms to seconds for display
   const durationSeconds = duration_ms / 1000;
@@ -430,8 +432,24 @@ const AudioCard = memo(({
           </div>
         ) : (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            <span>Generating audio...</span>
+            {progressValue !== null ? (
+              <div className="flex items-center gap-3 w-full">
+                <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-primary via-secondary to-primary bg-[length:200%_100%]"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progressValue}%` }}
+                    transition={{ duration: 0.2 }}
+                  />
+                </div>
+                <span className="font-mono text-[11px] tabular-nums">{Math.round(progressValue)}%</span>
+              </div>
+            ) : (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>Generating audio...</span>
+              </>
+            )}
           </div>
         )}
       </div>

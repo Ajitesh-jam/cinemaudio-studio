@@ -20,6 +20,7 @@ const Index = () => {
   const [finalAudio, setFinalAudio] = useState(null);
   const [missingCues, setMissingCues] = useState([]);
   const [enableNarrator, setEnableNarrator] = useState(true);
+  const [cueProgress, setCueProgress] = useState({});
   
   const handleDecompose = async (storyText) => {
     // Restore the audio cues
@@ -134,6 +135,37 @@ const Index = () => {
 
       for (let i = 0; i < allCues.length; i += BATCH_SIZE) {
         const batch = allCues.slice(i, i + BATCH_SIZE);
+        const requestId = crypto.randomUUID();
+        const batchCueIds = batch.map((c) => c.id);
+
+        // Initialize progress for this batch's cues.
+        setCueProgress((prev) => {
+          const next = { ...prev };
+          batchCueIds.forEach((id) => {
+            next[id] = { percent: 0 };
+          });
+          return next;
+        });
+
+        const progressStream = new EventSource(`${apiBase}/v1/progress/stream?request_id=${requestId}`);
+        progressStream.onmessage = (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            if (data?.type !== "diffusion") return;
+            const percent = typeof data.percent === "number" ? data.percent : 0;
+            const cueIds = Array.isArray(data.cue_ids) ? data.cue_ids : [];
+            setCueProgress((prev) => {
+              const next = { ...prev };
+              cueIds.forEach((id) => {
+                if (id === null || id === undefined) return;
+                next[id] = { percent };
+              });
+              return next;
+            });
+          } catch {
+            // ignore
+          }
+        };
 
         try {
           const res = await fetch(`${apiBase}/v1/generate-audio`, {
@@ -144,6 +176,7 @@ const Index = () => {
             body: JSON.stringify({
               cues: batch,
               total_duration_ms: totalDurationMs,
+              request_id: requestId,
             }),
           });
 
@@ -186,11 +219,21 @@ const Index = () => {
                     )
                   );
                 }
+
+                // Remove progress once audio is ready.
+                setCueProgress((prev) => {
+                  if (!cueId) return prev;
+                  const next = { ...prev };
+                  delete next[cueId];
+                  return next;
+                });
               }
             });
           }
         } catch (batchErr) {
           console.error("Error generating audio for cues batch:", batchErr);
+        } finally {
+          progressStream.close();
         }
       }
     } catch (err) {
@@ -246,7 +289,7 @@ const Index = () => {
     );
   };
 
-  const handleMasterMix = () => {
+  const handleMasterMix = async () => {
     setFinalAudio(null);
     setMissingCues([]);
     setIsLoading(true);
@@ -293,46 +336,41 @@ const Index = () => {
     const apiBase = import.meta.env.VITE_BACKEND_ENDPOINT || "/api";
     const payload = { cues, story_text: storyText, speed_wps: 2 };
 
-    // Phase 1: check missing cues so we can show them in loading state
-    fetch(`${apiBase}/v1/check-missing-audio-cues`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then((res) => (res.ok ? res.json() : Promise.resolve({ missing_cues: [] })))
-      .then((data) => {
-        setMissingCues(data.missing_cues || []);
-      })
-      .catch(() => setMissingCues([]));
+    try {
+      // Phase 1: check missing cues first, show them in loading state
+      const checkRes = await fetch(`${apiBase}/v1/check-missing-audio-cues`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const checkData = checkRes.ok ? await checkRes.json() : { missing_cues: [] };
+      setMissingCues(checkData.missing_cues || []);
 
-    // Phase 2: generate final audio
-    fetch(`${apiBase}/v1/generate-audio-cues-with-audio-base64`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Failed to generate audio");
-        return response.json();
-      })
-      .then((data) => {
-        const totalDurationMs = Math.max(
-          ...cues.map(cue => cue.audio_cue.start_time_ms + cue.audio_cue.duration_ms),
-          0
-        );
-        setFinalAudio({
-          audioBase64: data.audio_base64 || null,
-          duration: totalDurationMs / 1000
-        });
-        setMissingCues([]);
-      })
-      .catch((err) => {
-        console.error("Error generating audio:", err);
-        setMissingCues([]);
-      })
-      .finally(() => setIsLoading(false));
-
-    return true;
+      // Phase 2: generate final audio (after check completes)
+      const genRes = await fetch(`${apiBase}/v1/generate-audio-cues-with-audio-base64`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!genRes.ok) throw new Error("Failed to generate audio");
+      const genData = await genRes.json();
+      const totalDurationMs = Math.max(
+        ...cues.map(cue => cue.audio_cue.start_time_ms + cue.audio_cue.duration_ms),
+        0
+      );
+      setFinalAudio({
+        audioBase64: genData.audio_base64 || null,
+        duration: totalDurationMs / 1000
+      });
+      setMissingCues([]);
+      return true;
+    } catch (err) {
+      console.error("Error generating audio:", err);
+      setMissingCues([]);
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleCustomMusicSave = async (personName, description, file) => {
@@ -471,6 +509,7 @@ const Index = () => {
                         weight_db={0}
                         fade_ms={500}
                         audio_base64={cue.audioBase64}
+                        progressPercent={cueProgress?.[cue.id]?.percent}
                         handleUpdate={handleNarratorUpdate}
                         evaluation={cue.evaluation || { promptAdherence: 0, acousticNaturalness: 0, recognitionRate: 0 }}
                         onEvaluationUpdate={handleNarratorEvaluationUpdate}
@@ -520,6 +559,7 @@ const Index = () => {
                         weight_db={cue.weight_db}
                         fade_ms={cue.fade_ms}
                         audio_base64={cue.audioBase64}
+                        progressPercent={cueProgress?.[cue.id]?.percent}
                         handleUpdate={handleUpdate}
                         evaluation={cue.evaluation || { promptAdherence: 0, acousticNaturalness: 0, recognitionRate: 0 }}
                         onEvaluationUpdate={handleEvaluationUpdate}

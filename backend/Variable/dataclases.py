@@ -52,6 +52,7 @@ class CueRequest(BaseModel):
 class GenerateAudioFromCuesRequest(BaseModel):
     cues: List[CueRequest]
     total_duration_ms: int
+    request_id: Optional[str] = None
     
 class GenerateAudioFromCuesResponse(BaseModel):
     audio_cues: List[AudioCueWithAudioBase64]

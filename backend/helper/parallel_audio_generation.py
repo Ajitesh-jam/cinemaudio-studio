@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, cast
+from typing import List, Optional, Dict, cast, Callable
 import logging
 from collections import defaultdict
 
@@ -34,7 +34,12 @@ def _segment_to_base64_and_wrap(cue: Cue, segment: AudioSegment) -> AudioCueWith
         duration_ms=cue.duration_ms,
     )
 
-def _process_batch_type(audio_type: str, cues: List[AudioCue]) -> List[AudioCueWithAudioBase64]:
+def _process_batch_type(
+    audio_type: str,
+    cues: List[AudioCue],
+    request_id: Optional[str] = None,
+    publish_progress: Optional[Callable[[str, dict], None]] = None,
+) -> List[AudioCueWithAudioBase64]:
     """
     Generate audio for all cues of a batch type (SFX, AMBIENCE, MUSIC) using
     the specialist's generate_for_batch. Parallelism is handled inside lib.py.
@@ -44,13 +49,37 @@ def _process_batch_type(audio_type: str, cues: List[AudioCue]) -> List[AudioCueW
     specialist_func = SPECIALIST_MAP[audio_type]
     prompts = [c.audio_class for c in cues]
     duration_ms = max(c.duration_ms for c in cues)
+    cue_ids = [getattr(c, "id", None) for c in cues]
     logger.info(
         "Batch generation for %s: %d prompts, duration_ms=%d (parallelism in lib)",
         audio_type,
         len(prompts),
         duration_ms,
     )
-    segments = specialist_func(prompts, duration_ms)
+
+    def _progress_cb(step: int, total_steps: int):
+        if not request_id or not publish_progress:
+            return
+        percent = 0
+        if total_steps:
+            percent = max(0, min(100, int(step * 100 / total_steps)))
+        publish_progress(
+            request_id,
+            {
+                "type": "diffusion",
+                "audio_type": audio_type,
+                "cue_ids": cue_ids,
+                "step": step,
+                "total_steps": total_steps,
+                "percent": percent,
+            },
+        )
+
+    try:
+        segments = specialist_func(prompts, duration_ms, progress_callback=_progress_cb)
+    except TypeError:
+        # Backwards compatibility if specialist doesn't accept progress_callback.
+        segments = specialist_func(prompts, duration_ms)
     results = []
     for cue, segment in zip(cues, segments):
         try:
@@ -72,7 +101,11 @@ def _process_single_cue(cue: Cue) -> Optional[AudioCueWithAudioBase64]:
         return None
 
 
-def parallel_audio_generation(cues: List[Cue]) -> List[AudioCueWithAudioBase64]:
+def parallel_audio_generation(
+    cues: List[Cue],
+    request_id: Optional[str] = None,
+    publish_progress: Optional[Callable[[str, dict], None]] = None,
+) -> List[AudioCueWithAudioBase64]:
     """
     Generate audio for cues by type: for all audio_types in BATCH_AUDIO_TYPES,
     process all cues of that type in a batch (parallelism in lib.py), then process
@@ -99,7 +132,14 @@ def parallel_audio_generation(cues: List[Cue]) -> List[AudioCueWithAudioBase64]:
     for audio_type in BATCH_AUDIO_TYPES:
         if batch_type_cues_map[audio_type]:
             # Equivalent to parallel_audio_generation.py (48-57)
-            results.extend(_process_batch_type(audio_type, batch_type_cues_map[audio_type]))
+            results.extend(
+                _process_batch_type(
+                    audio_type,
+                    batch_type_cues_map[audio_type],
+                    request_id=request_id,
+                    publish_progress=publish_progress,
+                )
+            )
 
     # Process the non-batch cues individually (NARRATOR, MOVIE_BGM, etc.)
     for cue in non_batch_cues:

@@ -35,12 +35,21 @@ def emotional_music_generator(prompt: str, duration_ms: int):
     )
     return segment
 
+<<<<<<< Updated upstream
 def emotional_music_generator_for_batch(prompts: list[str], duration_ms: int):
     """Generates a background music track for a batch of prompts."""
     logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms")
     duration_s = int(duration_ms / 1000.0)
     model_cls = get_model(model_config.music_model_name)
     audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s)
+=======
+def emotional_music_generator_for_batch(prompts: list[str], duration_ms: int, model_name: str = TANGO2, progress_callback=None):
+    """Generates a background music track for a batch of prompts."""
+    logger.info(f"Generating for batch of {len(prompts)} prompts with duration {duration_ms}ms")
+    duration_s = int(duration_ms / 1000.0)
+    model_cls = get_model(model_name)
+    audio_arr = model_cls.generate_for_batch(prompts, steps=STEPS, duration=duration_s, progress_callback=progress_callback)
+>>>>>>> Stashed changes
     if audio_arr is None :
         raise ValueError(f"Failed to generate audio for batch of {len(prompts)} prompts. Model returned empty array.")
     segments = [AudioSegment(

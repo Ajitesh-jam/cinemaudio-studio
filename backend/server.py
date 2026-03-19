@@ -11,8 +11,10 @@ import sys
 import logging
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, status
+import uuid
+from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import uvicorn
 
 # Add project root to path
@@ -52,6 +54,7 @@ from helper.audio_conversions import audio_to_base64
 from helper.parallel_audio_generation import parallel_audio_generation
 
 from helper.lib import init_models 
+from helper.progress_hub import ensure_channel, publish, sse_subscribe
 superimposition_model_ins = SuperimpositionModel()
 # Configure logging to explicitly output to stdout/stderr with colored output
 
@@ -130,6 +133,32 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+@app.get("/api/v1/progress/stream")
+async def progress_stream(request_id: str, request: Request):
+    """
+    Server-Sent Events (SSE) stream for per-request progress events.
+    Frontend should connect with EventSource and pass request_id.
+    """
+    ensure_channel(request_id)
+
+    async def event_iter():
+        async for chunk in sse_subscribe(request_id):
+            # Stop streaming if client disconnected.
+            if await request.is_disconnected():
+                return
+            yield chunk
+
+    return StreamingResponse(
+        event_iter(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # If behind nginx, avoid buffering SSE.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 @app.post("/api/v1/decide-cues", response_model=DecideCuesResponse)
 async def decide_audio_cues_handler(request: DecideCuesRequest):
     """
@@ -174,9 +203,11 @@ async def generate_audio_from_cues_handler(request: GenerateAudioFromCuesRequest
         
         
         logger.info(f"Generating audio from {len(request.cues)} cues")
+        request_id = getattr(request, "request_id", None) or str(uuid.uuid4())
+        ensure_channel(request_id)
         cues = [dict_to_cue(c.model_dump()) for c in request.cues]
         logger.info(f"Cues converted to dataclasses: {cues}")
-        audio_cues = parallel_audio_generation(cues)
+        audio_cues = parallel_audio_generation(cues, request_id=request_id, publish_progress=publish)
         return GenerateAudioFromCuesResponse(
             audio_cues=audio_cues,
             message="Successfully generated audio"

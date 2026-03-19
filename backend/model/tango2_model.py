@@ -73,14 +73,21 @@ class Tango2Model(SoundEffectsModel):
     def generate(cls, prompt: str, steps: int = 100, duration: int = 10, **kwargs):
         model = cls.get_instance()
         logger.info(f"Generating audio from Tango2 for prompt: {prompt} with duration {duration} seconds")
-        return model.generate(prompt, steps=steps, duration=float(duration))
+        progress_callback = kwargs.get("progress_callback")
+        return model.generate(prompt, steps=steps, duration=float(duration), progress_callback=progress_callback)
 
     @classmethod
     def generate_for_batch(cls, prompts: list[str], steps: int = 100, duration: int = 10, **kwargs):
         model = cls.get_instance()
 
         logger.info(f"Generating audio from Tango2 for batch of {len(prompts)} prompts with duration {duration} seconds")
-        audios = model.generate_for_batch(prompts, steps=steps, duration=float(duration))
+        progress_callback = kwargs.get("progress_callback")
+        audios = model.generate_for_batch(
+            prompts,
+            steps=steps,
+            duration=float(duration),
+            progress_callback=progress_callback,
+        )
 
         # Apply semantic cropping using CLAP to better align each audio with its text prompt.
         try:
