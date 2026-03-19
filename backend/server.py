@@ -53,6 +53,57 @@ from helper.parallel_audio_generation import parallel_audio_generation
 
 from helper.lib import init_models 
 superimposition_model_ins = SuperimpositionModel()
+
+def _cue_dedupe_key(cue) -> tuple:
+    """De-dupe key for LLM-returned missing cues."""
+    a_type = str(getattr(cue, "audio_type", "") or "").upper()
+    start_ms = int(getattr(cue, "start_time_ms", 0) or 0)
+    duration_ms = int(getattr(cue, "duration_ms", 0) or 0)
+    audio_class = getattr(cue, "audio_class", None)
+    narrator_description = getattr(cue, "narrator_description", None)
+    return (a_type, audio_class, narrator_description, start_ms, duration_ms)
+
+
+def _missing_items_to_generate_cues(missing_items, existing_audio_cues, *, skip_audio_types: set[str]):
+    if not missing_items:
+        return []
+
+    existing_keys = set()
+    next_id = 0
+    for cw in existing_audio_cues:
+        cue = getattr(cw, "audio_cue", None)
+        if cue is None:
+            continue
+        next_id = max(next_id, int(getattr(cue, "id", 0) or 0))
+        existing_keys.add(_cue_dedupe_key(cue))
+    next_id += 1
+
+    if isinstance(missing_items, dict):
+        items_iter = [missing_items]
+    else:
+        items_iter = missing_items
+
+    out = []
+    for item in items_iter:
+        if not isinstance(item, dict):
+            continue
+        a_type = str(item.get("audio_type", "") or "").upper()
+        if a_type in skip_audio_types:
+            continue
+
+        cue = dict_to_cue(item)
+        if str(getattr(cue, "audio_type", "") or "").upper() in skip_audio_types:
+            continue
+
+        key = _cue_dedupe_key(cue)
+        if key in existing_keys:
+            continue
+
+        cue.id = next_id
+        next_id += 1
+        out.append(cue)
+        existing_keys.add(key)
+    return out
 # Configure logging to explicitly output to stdout/stderr with colored output
 
 class ColorFormatter(logging.Formatter):
@@ -230,11 +281,19 @@ async def check_missing_audio_cues(request: GenerateAudioCuesWithAudioBase64Requ
         not_covered_classes = superimposition_model_ins.check_missing_audio_cues(
             request.story_text, audio_cues, total_duration_ms
         )
-        missing_cues = [
-            audio_cue_to_dict(c.audio_cue)
-            for c in audio_cues
-            if getattr(c.audio_cue, "audio_class", None) in not_covered_classes
-        ]
+        missing_cues = []
+        # `check_missing_audio_cues()` returns LLM-generated cue dicts (not strings).
+        if isinstance(not_covered_classes, list) and not_covered_classes and all(
+            isinstance(x, dict) for x in not_covered_classes
+        ):
+            missing_cues = not_covered_classes
+        else:
+            # Backwards compatibility: if the return is a list of audio_class strings.
+            missing_cues = [
+                audio_cue_to_dict(c.audio_cue)
+                for c in audio_cues
+                if getattr(c.audio_cue, "audio_class", None) in not_covered_classes
+            ]
         return CheckMissingCuesResponse(missing_cues=missing_cues, total_duration_ms=total_duration_ms)
     except Exception as e:
         logger.error(f"Error checking missing audio cues: {e}", exc_info=True)
@@ -260,11 +319,18 @@ async def generate_audio_cues_with_audio_base64(request: GenerateAudioCuesWithAu
             )
             if not_covered_classes:
                 logger.info(f"Not covered audio cues: {not_covered_classes}")
-                missing_cue_objects = [
-                    c.audio_cue for c in audio_cues
-                    if getattr(c.audio_cue, "audio_class", None) in not_covered_classes
-                ]
-                generated_missing = parallel_audio_generation(missing_cue_objects)
+                missing_cues_to_generate = _missing_items_to_generate_cues(
+                    not_covered_classes,
+                    audio_cues,
+                    skip_audio_types={"NARRATOR"},
+                )
+                generated_missing = parallel_audio_generation(missing_cues_to_generate)
+                logger.info(
+                    "Missing cue fill: candidates=%d to_generate=%d generated=%d",
+                    len(not_covered_classes) if isinstance(not_covered_classes, list) else 1,
+                    len(missing_cues_to_generate),
+                    len(generated_missing),
+                )
                 audio_cues.extend(generated_missing)
 
         final_audio = superimposition_model_ins.superimpose_audio_cues_with_audio_base64(

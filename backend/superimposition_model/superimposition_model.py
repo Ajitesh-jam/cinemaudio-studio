@@ -76,6 +76,11 @@ class SuperimpositionModel:
         not_covered_audio_cues = []     
         if audio_cues_to_fill:
             movie_bgms_csv = read_movie_bgms_csv()
+            if movie_bgms_csv is None:
+                logger.warning(
+                    "Skipping movie-BGM-based missing cue fill because metadata CSV is missing."
+                )
+                return []
             prompt = prompt_to_fill_missing_audio_cues.format(story_text=story_text, audio_cues=audio_cues_to_fill, movie_bgms_csv=movie_bgms_csv)
             response = query_llm(llm_name="gemini", model_name="gemini-2.5-flash", prompt=prompt)
             if response:

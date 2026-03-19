@@ -402,6 +402,11 @@ def query_gemini(
         if movie_bgms_enabled:
             try:
                 movie_bgms_csv = read_movie_bgms_csv()
+                if movie_bgms_csv is None:
+                    logger.warning(
+                        "Skipping movie BGM stage because metadata CSV is missing."
+                    )
+                    return audio_cues
                 prompt_value = gemini_add_movie_bgms.format_prompt(
                     story_text=story_text,
                     speed_wps=speed_wps,

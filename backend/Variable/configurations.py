@@ -58,6 +58,7 @@ SOUND_TYPES = ["SFX", "AMBIENCE", "MUSIC", "NARRATOR","MOVIE_BGM"]
 # Supported model names: use these with get_model() or generate_sound()
 TANGO_FLUX = "TangoFlux"
 ELEVEN_LABS = "ElevenLabs"
+AUDIO_LDM2 = "AudioLDM2"
 TANGO2 = "Tango2"
 
 

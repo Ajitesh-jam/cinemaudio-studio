@@ -1,10 +1,12 @@
 from typing import Optional, Type, List, Tuple
 import threading
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 from Variable.configurations import (
     TANGO_FLUX,
     ELEVEN_LABS,
+    AUDIO_LDM2,
     TANGO2,
     PARALLEL_EXECUTION,
     PARALLEL_WORKERS,
@@ -19,6 +21,7 @@ from model.tangoflux_model import TangoFluxModel
 from model.elevenlabs_model import ElevenLabsModel
 from model.tango2_model import Tango2Model
 from model.parlerTTSModel import ParlerTTSModel
+from model.audioLDM_model import AudioLDM2Model
 # Thread-local storage for worker IDs
 _thread_local = threading.local()
 
@@ -27,6 +30,7 @@ logger = logging.getLogger(__name__)
 parler_tts_model_ins = ParlerTTSModel()
 tango2_model_ins = Tango2Model()
 tango_flux_model_ins = TangoFluxModel()
+audio_ldm2_model_ins = AudioLDM2Model()
 is_initialized = False
 
 
@@ -51,6 +55,13 @@ def init_models():
     except Exception as e:
         logger.warning("Tango2 preload skipped (will lazy-load on first use or fail then): %s", e)
 
+    # Preload AudioLDM2 model (optional; may fail if diffusers/model deps unavailable)
+    try:
+        audio_ldm2_model_ins.get_instance()
+        logger.info("Preloaded AudioLDM2 model")
+    except Exception as e:
+        logger.warning("AudioLDM2 preload skipped (will lazy-load on first use or fail then): %s", e)
+
     # Preload TangoFlux models based on execution mode (optional: may fail if tangoflux/diffusers incompatible)
     try:
         if PARALLEL_EXECUTION:
@@ -70,6 +81,7 @@ def init_models():
     _model_registry["parlertts"] = parler_tts_model_ins
     _model_registry["tango2"] = tango2_model_ins
     _model_registry["tangoflux"] = tango_flux_model_ins
+    _model_registry["audioldm2"] = audio_ldm2_model_ins
 
     global is_initialized
     is_initialized = True
@@ -125,8 +137,27 @@ def generate_sound(
     return model_cls.generate(prompt, steps=steps, duration=duration, worker_id=worker_id, **kwargs)
 
 def read_movie_bgms_csv():
-    """Read the movie bgms csv file."""
-    return pd.read_csv(PATH_TO_MOVIE_BGM_METADATA)    
+    """Read the movie bgms csv file.
+
+    Returns:
+        pd.DataFrame | None: Returns None when the CSV is missing/unreadable.
+    """
+    try:
+        # PATH_TO_MOVIE_BGM_METADATA is expressed relative to `backend/`.
+        backend_root = Path(__file__).resolve().parents[1]
+        csv_path = backend_root / PATH_TO_MOVIE_BGM_METADATA
+
+        if not csv_path.exists():
+            logger.warning(
+                "Movie BGM metadata CSV not found at '%s'. Skipping movie BGM stage.",
+                str(csv_path),
+            )
+            return None
+
+        return pd.read_csv(csv_path)
+    except Exception:
+        logger.exception("Failed to read movie BGM metadata CSV")
+        return None     
     
 
 
