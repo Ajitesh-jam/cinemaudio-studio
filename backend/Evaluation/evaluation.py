@@ -2,11 +2,12 @@
 Evaluation runner for the audio-generation pipeline.
 
 This script:
-1) Reads `yt_random_test_dataset.jsonl`
-2) Runs the end-to-end cue->audio->superimposition pipeline for multiple
-   config flag variants and Gemini cue-decider model variants
-3) Computes all available evaluator metrics from `backend/Evaluation/evaluator.py`
-4) Measures per-stage timing and appends results to a CSV incrementally
+1) Reads a JSONL dataset (e.g. `yt_random_test_dataset.jsonl`)
+2) Runs cue decision → specialist generation → optional missing fill → superimpose → metrics
+3) Computes evaluator metrics from `backend/Evaluation/evaluator.py` when deps are available
+4) Appends timing + scores to CSV incrementally
+
+Logging: use `--debug` and optional `--log-file`; grep logs for `[EVAL-DEBUG]` or `[EVAL]`.
 """
 
 import sys
@@ -42,7 +43,88 @@ from helper.audio_conversions import audio_to_base64, dict_to_cue
 from helper.lib import init_models, get_model  
 from superimposition_model.superimposition_model import SuperimpositionModel  
 import logging
+
 logger = logging.getLogger(__name__)
+
+# Step labels for grep-friendly logs: grep EVAL-DEBUG evaluation_logs.log
+_EVAL_STEP = 0
+
+
+def _eval_debug_reset() -> None:
+    global _EVAL_STEP
+    _EVAL_STEP = 0
+
+
+def _eval_debug_step(message: str, **extra: Any) -> None:
+    """Structured debug line for each pipeline milestone."""
+    global _EVAL_STEP
+    _EVAL_STEP += 1
+    suffix = ""
+    if extra:
+        try:
+            suffix = " | " + json.dumps(extra, ensure_ascii=False, default=str)
+        except Exception:
+            suffix = " | " + str(extra)
+    logger.info("[EVAL-DEBUG] step=%d %s%s", _EVAL_STEP, message, suffix)
+
+
+def _log_hf_hub_environment() -> None:
+    """
+    Log Hugging Face / cache env vars and common footguns (local dir shadowing repo id).
+    Helps debug: OSError Can't load config for 'org/repo' ... scheduler_config.json
+    """
+    keys = (
+        "HF_HOME",
+        "HUGGINGFACE_HUB_CACHE",
+        "HF_HUB_CACHE",
+        "TRANSFORMERS_CACHE",
+        "HF_DATASETS_CACHE",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "XDG_CACHE_HOME",
+        "HOME",
+    )
+    env_snapshot: Dict[str, str] = {}
+    for k in keys:
+        v = os.environ.get(k)
+        if v is None:
+            continue
+        if k in ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN") and v:
+            env_snapshot[k] = "<set>"
+        else:
+            env_snapshot[k] = v
+    _eval_debug_step("huggingface_hub_environment", **env_snapshot)
+
+    # Typical Tango2 scheduler repo from training defaults (may appear in errors)
+    for repo_id in (
+        "sd2-community/stable-diffusion-2-1",
+        "stabilityai/stable-diffusion-2-1",
+    ):
+        for base in (os.getcwd(), project_root, os.path.join(project_root, "tango_new")):
+            candidate = os.path.join(base, repo_id)
+            if os.path.isdir(candidate):
+                _eval_debug_step(
+                    "warning_local_dir_shadows_hf_repo",
+                    repo_id=repo_id,
+                    path=candidate,
+                    hint="Rename/remove this folder or cd elsewhere; diffusers may load it instead of the Hub.",
+                )
+
+
+def _configure_eval_logging(*, debug: bool, log_file: str) -> None:
+    level = logging.DEBUG if debug else logging.INFO
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    handlers: List[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    if log_file.strip():
+        log_abs = os.path.abspath(log_file)
+        log_dir = os.path.dirname(log_abs)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handlers.append(logging.FileHandler(log_abs, encoding="utf-8"))
+    logging.basicConfig(level=level, format=log_format, handlers=handlers, force=True)
+    logging.getLogger(__name__).setLevel(level)
 
 def _cue_dedupe_key(cue: Any) -> tuple:
     """
@@ -276,7 +358,28 @@ def main() -> None:
         default="",
         help="Optional explicit output CSV path. If empty, uses Results/infernce_results/*.csv",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Verbose logging (DEBUG) and full tracebacks on errors.",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default="",
+        help="Append logs to this file (UTF-8). Example: backend/Evaluation/evaluation_debug.log",
+    )
     args = parser.parse_args()
+
+    _configure_eval_logging(debug=bool(args.debug), log_file=str(args.log_file or ""))
+    logger.info(
+        "[EVAL] start dataset_path=%s max_items=%s speed_wps=%s debug=%s",
+        args.dataset_path,
+        args.max_items,
+        args.speed_wps,
+        args.debug,
+    )
+    _log_hf_hub_environment()
 
     dataset_path = os.path.abspath(args.dataset_path)
     dataset_filename = os.path.splitext(os.path.basename(dataset_path))[0]
@@ -362,20 +465,39 @@ def main() -> None:
         ]
     )
 
-    # Preload heavy models once.
-    logger.info("Preloading specialist models...")
-    init_models()
+    # Preload heavy models once (Tango2 / Parler / AudioLDM2 may hit Hugging Face here).
+    _eval_debug_step("before_init_models")
+    logger.info("[EVAL] Preloading specialist models (init_models)...")
+    try:
+        init_models()
+    except OSError as e:
+        logger.exception(
+            "[EVAL] init_models OSError (often Hugging Face Hub: missing scheduler_config.json, "
+            "offline mode, gated repo, or a local directory shadowing the model id). Original error: %s",
+            e,
+        )
+        raise
+    except Exception:
+        logger.exception(
+            "[EVAL] init_models failed (see traceback; AudioLDM2/Tango2/diffusers load here)."
+        )
+        raise
+    _eval_debug_step("after_init_models_ok")
+
     evaluator: Any = None
     try:
-        logger.info("Initializing evaluator (loads CLAP + embeddings)...")
+        _eval_debug_step("before_audio_evaluator_init")
+        logger.info("[EVAL] Initializing evaluator (loads CLAP + embeddings)...")
         from Evaluation.evaluator import AudioEvaluator  # local/lazy import
 
         evaluator = AudioEvaluator()
+        _eval_debug_step("after_audio_evaluator_init_ok")
     except Exception as e:
         # Allow audio export + mapping even if evaluator deps are missing.
         evaluator = None
-        logger.warning(f"Evaluator disabled due to import/init error: {e}")
+        logger.warning("[EVAL] Evaluator disabled due to import/init error: %s", e, exc_info=args.debug)
     superimposition_model_ins = SuperimpositionModel()
+    _eval_debug_step("after_superimposition_model_init")
 
     # Build specialist model variants (baseline + one-at-a-time AudioLDM2 toggles).
     baseline_specialist = SpecialistVariant(
@@ -412,6 +534,12 @@ def main() -> None:
 
     # Evaluate dataset incrementally.
     for row_index, record in iter_jsonl(dataset_path, max_items=args.max_items):
+        _eval_debug_reset()
+        _eval_debug_step(
+            "dataset_row_start",
+            row_index=row_index,
+            source_url=str(record.get("source_url", ""))[:120],
+        )
         story_prompt = str(record.get("story_prompt") or "").strip()
         if not story_prompt:
             # Still write a row for each experiment so the CSV schema stays stable.
@@ -442,9 +570,16 @@ def main() -> None:
                     "error": "Empty story_prompt; skipping pipeline.",
                 }
                 append_row(output_csv, fieldnames, row)
+            logger.info("[EVAL] row=%d skipped: empty story_prompt", row_index)
             continue
 
         for exp in experiments:
+            _eval_debug_step(
+                "experiment_start",
+                row_index=row_index,
+                experiment_tag=exp.tag,
+                decide_audio_model_name=exp.decide_audio_model_name,
+            )
             # Apply config to singleton
             used_flags_resolved = {**baseline_flags, **exp.flags}
             run_type = exp.tag
@@ -458,6 +593,12 @@ def main() -> None:
 
             try:
                 # Step 1: decide audio cues (LLM)
+                _eval_debug_step(
+                    "before_decide_audio_cues",
+                    use_narrator=model_config.use_narrator,
+                    use_movie_bgms=model_config.use_movie_bgms,
+                    decide_audio_model_name=model_config.decide_audio_model_name,
+                )
                 t0 = time.perf_counter()
                 cues, total_duration_ms = decide_audio_cues(
                     story_prompt,
@@ -467,8 +608,22 @@ def main() -> None:
                 )
                 llm_suggested_cues_json = _to_json_string([_cue_to_dict(c) for c in cues])
                 stage_decide = time.perf_counter() - t0
+                _eval_debug_step(
+                    "after_decide_audio_cues",
+                    cue_count=len(cues),
+                    total_duration_ms=total_duration_ms,
+                    cue_decider_seconds=round(stage_decide, 4),
+                )
                 # Step 2+: for each specialist variant, generate audio using SAME cues.
                 for spec_variant in specialist_variants:
+                    _eval_debug_step(
+                        "specialist_variant_start",
+                        tag=spec_variant.tag,
+                        sfx=spec_variant.sfx_model_name,
+                        env=spec_variant.env_model_name,
+                        music=spec_variant.music_model_name,
+                        narrator=spec_variant.narrator_model_name,
+                    )
                     # Reset specialist model names for this variant.
                     model_config.sfx_model_name = spec_variant.sfx_model_name
                     model_config.env_model_name = spec_variant.env_model_name
@@ -491,10 +646,12 @@ def main() -> None:
 
                     # Validate selected specialist models before generation.
                     # If a model is not registered/available, record a clean error row for this variant.
+                    _eval_debug_step("before_get_model_validation")
                     try:
                         get_model(spec_variant.sfx_model_name)
                         get_model(spec_variant.env_model_name)
                         get_model(spec_variant.music_model_name)
+                        _eval_debug_step("after_get_model_validation_ok")
                     except Exception as e:
                         variant_error = f"Specialist model unavailable: {e}"
                         row = {
@@ -533,16 +690,48 @@ def main() -> None:
                             "Skipping variant %s due to unavailable model(s): %s",
                             spec_variant.tag,
                             e,
+                            exc_info=args.debug,
                         )
                         continue
 
                     # Step 2: generate cue audio (specialists)
+                    _eval_debug_step(
+                        "before_parallel_audio_generation",
+                        cue_count=len(cues),
+                        note="Tango2/AudioLDM2 may call Hugging Face (scheduler/unet) on first real batch.",
+                    )
+                    logger.info(
+                        "[EVAL] row=%d exp=%s variant=%s parallel_audio_generation n_cues=%d",
+                        row_index,
+                        exp.tag,
+                        spec_variant.tag,
+                        len(cues),
+                    )
                     t1 = time.perf_counter()
-                    audio_cues = parallel_audio_generation(cast(List[Cue], list(cues)))
+                    try:
+                        audio_cues = parallel_audio_generation(cast(List[Cue], list(cues)))
+                    except OSError as gen_e:
+                        logger.exception(
+                            "[EVAL] parallel_audio_generation OSError row=%d variant=%s (HF config/cache/repo?): %s",
+                            row_index,
+                            spec_variant.tag,
+                            gen_e,
+                        )
+                        raise
                     stage_initial_gen = time.perf_counter() - t1
+                    _eval_debug_step(
+                        "after_parallel_audio_generation",
+                        wrapped_cue_count=len(audio_cues),
+                        seconds=round(stage_initial_gen, 4),
+                    )
 
                     # Step 3 (optional): fill missing coverage
                     if model_config.fill_coverage_by_llm and audio_cues:
+                        _eval_debug_step(
+                            "before_missing_coverage_fill",
+                            fill_coverage_by_llm=True,
+                            existing_wrapped_cues=len(audio_cues),
+                        )
                         t2 = time.perf_counter()
                         not_covered_classes = superimposition_model_ins.check_missing_audio_cues(
                             story_prompt, audio_cues, total_duration_ms
@@ -568,13 +757,35 @@ def main() -> None:
                             
 
                         stage_missing_fill = time.perf_counter() - t2
+                        _eval_debug_step(
+                            "after_missing_coverage_fill",
+                            seconds=round(stage_missing_fill, 4),
+                            final_wrapped_cue_count=len(audio_cues),
+                        )
+                    else:
+                        _eval_debug_step(
+                            "skip_missing_coverage_fill",
+                            fill_coverage_by_llm=model_config.fill_coverage_by_llm,
+                            has_audio_cues=bool(audio_cues),
+                        )
 
                     # Step 4: superimpose to final audio
+                    _eval_debug_step(
+                        "before_superimpose",
+                        use_dsp=model_config.use_dsp,
+                        wrapped_cue_count=len(audio_cues),
+                        total_duration_ms=total_duration_ms,
+                    )
                     t3 = time.perf_counter()
                     final_audio = superimposition_model_ins.superimpose_audio_cues_with_audio_base64(
                         story_prompt, audio_cues, total_duration_ms
                     )
                     stage_superimpose = time.perf_counter() - t3
+                    _eval_debug_step(
+                        "after_superimpose",
+                        seconds=round(stage_superimpose, 4),
+                        final_audio_len_ms=len(final_audio),
+                    )
 
                     # Export generated audio for later inspection.
                     flags_hash = _hash_short(exp.used_flags_json() + "|" + story_prompt + "|" + spec_variant.tag)
@@ -587,15 +798,34 @@ def main() -> None:
                     os.makedirs(audio_subdir, exist_ok=True)
                     audio_filename = f"row_{row_index}_{flags_hash}.wav"
                     audio_wav_path = os.path.join(audio_subdir, audio_filename)
+                    _eval_debug_step("before_wav_export", path=audio_wav_path)
                     try:
                         final_audio.export(audio_wav_path, format="wav")
                     except Exception as export_e:
                         audio_export_error = str(export_e)
+                        logger.warning(
+                            "[EVAL] wav export failed row=%d variant=%s: %s",
+                            row_index,
+                            spec_variant.tag,
+                            export_e,
+                            exc_info=args.debug,
+                        )
+                    _eval_debug_step(
+                        "after_wav_export",
+                        audio_wav_path=audio_wav_path,
+                        audio_export_error=audio_export_error or None,
+                    )
 
                     # Step 5: convert to base64
+                    _eval_debug_step("before_audio_to_base64")
                     t4 = time.perf_counter()
                     audio_base64 = audio_to_base64(final_audio)
                     stage_audio_to_base64 = time.perf_counter() - t4
+                    _eval_debug_step(
+                        "after_audio_to_base64",
+                        seconds=round(stage_audio_to_base64, 4),
+                        b64_len=len(audio_base64) if audio_base64 else 0,
+                    )
 
                     pipeline_total = time.perf_counter() - pipeline_start
 
@@ -605,6 +835,13 @@ def main() -> None:
                     )
 
                     # Step 6: evaluate
+                    _eval_debug_step(
+                        "before_metrics",
+                        evaluator_active=evaluator is not None,
+                        yt_audio_cue_count=len(
+                            [c for c in audio_cues_final if isinstance(c.audio_cue, AudioCue)]
+                        ),
+                    )
                     t5 = time.perf_counter()
                     yt_audio_cues: List[AudioCue] = [
                         c.audio_cue for c in audio_cues_final if isinstance(c.audio_cue, AudioCue)
@@ -651,6 +888,11 @@ def main() -> None:
                         metrics["error"] = "Evaluator disabled (missing deps). Audio exported, metrics skipped."
 
                     stage_total = time.perf_counter() - t_variant_start
+                    _eval_debug_step(
+                        "after_metrics",
+                        evaluation_seconds=round(stage_eval, 4),
+                        clap_preview=str(metrics.get("clap_score", ""))[:80],
+                    )
 
                     # Append row for this specialist variant
                     row = {
@@ -685,8 +927,24 @@ def main() -> None:
                     }
 
                     append_row(output_csv, fieldnames, row)
+                    logger.info(
+                        "[EVAL] row=%d exp=%s variant=%s OK pipeline_total=%.2fs wav=%s",
+                        row_index,
+                        exp.tag,
+                        spec_variant.tag,
+                        pipeline_total,
+                        audio_wav_path or "(none)",
+                    )
+                    _eval_debug_step("specialist_variant_complete", tag=spec_variant.tag)
             except Exception as e:
                 # Append an error row to keep datasets comparable.
+                logger.exception(
+                    "[EVAL] pipeline error row=%d exp=%s type=%s: %s",
+                    row_index,
+                    exp.tag,
+                    type(e).__name__,
+                    e,
+                )
                 pipeline_total = time.perf_counter() - pipeline_start
                 err = "".join(traceback.format_exception_only(type(e), e)).strip()
                 # Even on error, record one row with baseline specialist info.
