@@ -81,7 +81,7 @@ class ModelConfig:
         self.music_model_name = TANGO2
         self.narrator_model_name = "parlertts"
             
-        self.fill_coverage_by_llm = True
+        self.fill_coverage_by_llm = False
         self.use_dsp = True  
         
         self.use_movie_bgms = False

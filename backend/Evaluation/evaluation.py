@@ -13,23 +13,21 @@ Logging: use `--debug` and optional `--log-file`; grep logs for `[EVAL-DEBUG]` o
 import sys
 import os
 
-# Get absolute path of project root (one level up from current notebook)
-project_root = os.path.abspath("..")
+# Backend root (parent of this package); cwd-independent so imports work from any launch dir.
+_EVAL_DIR = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(_EVAL_DIR, ".."))
 
-# Add to sys.path if not already
 if project_root not in sys.path:
     sys.path.append(project_root)
 
 import argparse
 import csv
 import json
-import os
-import sys
 import time
 import traceback
 import hashlib
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar, cast
 
 
 # NOTE: `backend/Evaluation/evaluator.py` imports optional heavy deps (e.g. `librosa`).
@@ -46,8 +44,41 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
+
 # Step labels for grep-friendly logs: grep EVAL-DEBUG evaluation_logs.log
 _EVAL_STEP = 0
+
+
+def _exc_for_csv(exc: BaseException, *, max_len: int = 2000) -> str:
+    """Compact error text for CSV (avoids multiline cells breaking parsers)."""
+    parts = "".join(traceback.format_exception_only(type(exc), exc)).strip().replace("\n", " | ")
+    if len(parts) > max_len:
+        return parts[: max_len - 3] + "..."
+    return parts
+
+
+def _run_stage(
+    label: str,
+    fn: Callable[[], _T],
+    *,
+    row_index: int,
+    experiment_tag: str,
+    variant_tag: str,
+) -> Tuple[Optional[_T], str]:
+    """Run a pipeline stage; log full traceback and return (value, error_suffix)."""
+    try:
+        return fn(), ""
+    except Exception as e:
+        logger.exception(
+            "[EVAL] stage=%s row=%d exp=%s variant=%s: %s",
+            label,
+            row_index,
+            experiment_tag,
+            variant_tag,
+            e,
+        )
+        return None, f"{label}: {_exc_for_csv(e)}"
 
 
 def _eval_debug_reset() -> None:
@@ -97,7 +128,6 @@ def _log_hf_hub_environment() -> None:
             env_snapshot[k] = v
     _eval_debug_step("huggingface_hub_environment", **env_snapshot)
 
-    # Typical Tango2 scheduler repo from training defaults (may appear in errors)
     for repo_id in (
         "sd2-community/stable-diffusion-2-1",
         "stabilityai/stable-diffusion-2-1",
@@ -116,6 +146,12 @@ def _log_hf_hub_environment() -> None:
 def _configure_eval_logging(*, debug: bool, log_file: str) -> None:
     level = logging.DEBUG if debug else logging.INFO
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    reconf = getattr(sys.stderr, "reconfigure", None)
+    if callable(reconf):
+        try:
+            reconf(line_buffering=True)
+        except (OSError, ValueError):
+            pass
     handlers: List[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     if log_file.strip():
         log_abs = os.path.abspath(log_file)
@@ -181,7 +217,11 @@ def _missing_items_to_generate_cues(
         if a_type in skip_audio_types:
             continue
 
-        cue = dict_to_cue(item)
+        try:
+            cue = dict_to_cue(item)
+        except Exception as e:
+            logger.exception("[EVAL] dict_to_cue failed for missing-cue item: %s", e)
+            continue
         if str(getattr(cue, "audio_type", "") or "").upper() in skip_audio_types:
             continue
 
@@ -213,14 +253,33 @@ class ExperimentConfig:
 
 
 def iter_jsonl(path: str, max_items: Optional[int] = None) -> Iterable[Tuple[int, Dict[str, Any]]]:
-    with open(path, "r", encoding="utf-8") as f:
+    try:
+        f = open(path, "r", encoding="utf-8")
+    except OSError as e:
+        logger.exception("[EVAL] cannot open dataset_path=%s: %s", path, e)
+        raise
+    try:
         for idx, line in enumerate(f):
-            if max_items is not None and (idx >= max_items):
+            if max_items is not None and idx >= max_items:
                 return
             line = line.strip()
             if not line:
                 continue
-            yield idx, json.loads(line)
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as e:
+                logger.exception("[EVAL] JSONL parse error path=%s line_index=%d: %s", path, idx, e)
+                continue
+            if not isinstance(record, dict):
+                logger.error(
+                    "[EVAL] JSONL line_index=%d expected object, got %s",
+                    idx,
+                    type(record).__name__,
+                )
+                continue
+            yield idx, record
+    finally:
+        f.close()
 
 
 def safe_to_float(x: Any) -> Optional[float]:
@@ -246,17 +305,27 @@ def set_model_config_for_experiment(exp: ExperimentConfig, baseline_flags: Dict[
 def _write_header_if_needed(csv_path: str, fieldnames: List[str]) -> None:
     if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
         return
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
+    csv_dir = os.path.dirname(csv_path)
+    try:
+        if csv_dir:
+            os.makedirs(csv_dir, exist_ok=True)
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+    except OSError as e:
+        logger.exception("[EVAL] CSV header write failed path=%s: %s", csv_path, e)
+        raise
 
 
 def append_row(csv_path: str, fieldnames: List[str], row: Dict[str, Any]) -> None:
-    _write_header_if_needed(csv_path, fieldnames)
-    with open(csv_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writerow({k: row.get(k, "") for k in fieldnames})
+    try:
+        _write_header_if_needed(csv_path, fieldnames)
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+    except OSError as e:
+        logger.exception("[EVAL] CSV append_row failed path=%s: %s", csv_path, e)
+        raise
 
 def _hash_short(s: str) -> str:
     return hashlib.md5(s.encode("utf-8")).hexdigest()[:10]
@@ -286,7 +355,11 @@ def _cue_to_dict(cue: Any) -> Dict[str, Any]:
 
 
 def _to_json_string(payload: Any) -> str:
-    return json.dumps(payload, ensure_ascii=False)
+    try:
+        return json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError) as e:
+        logger.exception("[EVAL] JSON serialize failed (using placeholder): %s", e)
+        return json.dumps({"_error": "json_serialize_failed", "detail": str(e)}, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -392,6 +465,10 @@ def main() -> None:
         if args.output_csv
         else os.path.join(results_dir, f"{dataset_filename}_inference_results.csv")
     )
+    logger.info(
+        "[EVAL] output_csv=%s (rows append after each specialist variant completes).",
+        output_csv,
+    )
     audio_root_dir = os.path.join(results_dir, "generated_audios")
 
     bool_flag_names = [
@@ -496,8 +573,12 @@ def main() -> None:
         # Allow audio export + mapping even if evaluator deps are missing.
         evaluator = None
         logger.warning("[EVAL] Evaluator disabled due to import/init error: %s", e, exc_info=args.debug)
-    superimposition_model_ins = SuperimpositionModel()
-    _eval_debug_step("after_superimposition_model_init")
+    try:
+        superimposition_model_ins = SuperimpositionModel()
+        _eval_debug_step("after_superimposition_model_init")
+    except Exception as e:
+        logger.exception("[EVAL] SuperimpositionModel init failed: %s", e)
+        raise
 
     # Build specialist model variants (baseline + one-at-a-time AudioLDM2 toggles).
     baseline_specialist = SpecialistVariant(
@@ -606,7 +687,16 @@ def main() -> None:
                     narrator_enabled=model_config.use_narrator,
                     movie_bgms_enabled=model_config.use_movie_bgms,
                 )
-                llm_suggested_cues_json = _to_json_string([_cue_to_dict(c) for c in cues])
+                try:
+                    llm_suggested_cues_json = _to_json_string([_cue_to_dict(c) for c in cues])
+                except Exception as cue_json_e:
+                    logger.exception(
+                        "[EVAL] llm_suggested_cues_json build failed row=%d exp=%s: %s",
+                        row_index,
+                        exp.tag,
+                        cue_json_e,
+                    )
+                    llm_suggested_cues_json = "[]"
                 stage_decide = time.perf_counter() - t0
                 _eval_debug_step(
                     "after_decide_audio_cues",
@@ -614,8 +704,59 @@ def main() -> None:
                     total_duration_ms=total_duration_ms,
                     cue_decider_seconds=round(stage_decide, 4),
                 )
-                # Step 2+: for each specialist variant, generate audio using SAME cues.
-                for spec_variant in specialist_variants:
+            except Exception as e:
+                logger.exception(
+                    "[EVAL] decide_audio_cues failed row=%d exp=%s: %s",
+                    row_index,
+                    exp.tag,
+                    e,
+                )
+                pipeline_total = time.perf_counter() - pipeline_start
+                row = {
+                    "row_index": row_index,
+                    "source_url": record.get("source_url", ""),
+                    "video_title": record.get("video_title", ""),
+                    "clip_index": record.get("clip_index", ""),
+                    "story_prompt": story_prompt[:500],
+                    "decide_audio_model_name": exp.decide_audio_model_name,
+                    "experiment_tag": exp.tag,
+                    "run_type": run_type,
+                    **{f"flag_{n}": used_flags_resolved[n] for n in bool_flag_names},
+                    "used_flags_json": exp.used_flags_json(),
+                    "cue_decider_seconds": 0.0,
+                    "initial_audio_generation_seconds": 0.0,
+                    "missing_fill_seconds": 0.0,
+                    "superimpose_seconds": 0.0,
+                    "audio_to_base64_seconds": 0.0,
+                    "pipeline_total_seconds": pipeline_total,
+                    "evaluation_seconds": 0.0,
+                    "total_seconds": pipeline_total,
+                    **{k: "" for k in metric_fieldnames},
+                    "sfx_model_name": baseline_specialist.sfx_model_name,
+                    "env_model_name": baseline_specialist.env_model_name,
+                    "music_model_name": baseline_specialist.music_model_name,
+                    "narrator_model_name": baseline_specialist.narrator_model_name,
+                    "specialist_model_variant_tag": baseline_specialist.tag,
+                    "llm_suggested_cues_json": "[]",
+                    "final_superimposed_cues_json": "[]",
+                    "audio_wav_path": "",
+                    "audio_export_error": "",
+                    "error": _exc_for_csv(e),
+                }
+                append_row(output_csv, fieldnames, row)
+                continue
+
+            for spec_variant in specialist_variants:
+                t_variant_start = time.perf_counter()
+                stage_initial_gen = 0.0
+                stage_missing_fill = 0.0
+                stage_superimpose = 0.0
+                stage_audio_to_base64 = 0.0
+                stage_eval = 0.0
+                final_superimposed_cues_json = "[]"
+                audio_wav_path = ""
+                audio_export_error = ""
+                try:
                     _eval_debug_step(
                         "specialist_variant_start",
                         tag=spec_variant.tag,
@@ -630,19 +771,9 @@ def main() -> None:
                     model_config.music_model_name = spec_variant.music_model_name
                     model_config.narrator_model_name = spec_variant.narrator_model_name
 
-                    stage_initial_gen = 0.0
-                    stage_missing_fill = 0.0
-                    stage_superimpose = 0.0
-                    stage_audio_to_base64 = 0.0
-                    stage_eval = 0.0
                     stage_total = 0.0
                     metrics: Dict[str, Any] = {}
-                    audio_wav_path = ""
-                    audio_export_error = ""
-                    final_superimposed_cues_json = "[]"
                     variant_error = ""
-
-                    t_variant_start = time.perf_counter()
 
                     # Validate selected specialist models before generation.
                     # If a model is not registered/available, record a clean error row for this variant.
@@ -708,16 +839,7 @@ def main() -> None:
                         len(cues),
                     )
                     t1 = time.perf_counter()
-                    try:
-                        audio_cues = parallel_audio_generation(cast(List[Cue], list(cues)))
-                    except OSError as gen_e:
-                        logger.exception(
-                            "[EVAL] parallel_audio_generation OSError row=%d variant=%s (HF config/cache/repo?): %s",
-                            row_index,
-                            spec_variant.tag,
-                            gen_e,
-                        )
-                        raise
+                    audio_cues = parallel_audio_generation(cast(List[Cue], list(cues)))
                     stage_initial_gen = time.perf_counter() - t1
                     _eval_debug_step(
                         "after_parallel_audio_generation",
@@ -733,29 +855,36 @@ def main() -> None:
                             existing_wrapped_cues=len(audio_cues),
                         )
                         t2 = time.perf_counter()
-                        not_covered_classes = superimposition_model_ins.check_missing_audio_cues(
-                            story_prompt, audio_cues, total_duration_ms
-                        )
-                        if not_covered_classes:
-                            # `check_missing_audio_cues()` returns LLM-generated cue dicts (not strings),
-                            # so we convert them to `Cue` objects and then generate audio.
-                            missing_cues_to_generate = _missing_items_to_generate_cues(
-                                not_covered_classes,
-                                audio_cues,
-                                skip_audio_types={"NARRATOR"},
+                        try:
+                            not_covered_classes = superimposition_model_ins.check_missing_audio_cues(
+                                story_prompt, audio_cues, total_duration_ms
                             )
-                            generated_missing = parallel_audio_generation(
-                                cast(List[Cue], missing_cues_to_generate)
+                            if not_covered_classes:
+                                missing_cues_to_generate = _missing_items_to_generate_cues(
+                                    not_covered_classes,
+                                    audio_cues,
+                                    skip_audio_types={"NARRATOR"},
+                                )
+                                generated_missing = parallel_audio_generation(
+                                    cast(List[Cue], missing_cues_to_generate)
+                                )
+                                logger.info(
+                                    "Missing cue fill: candidates=%d to_generate=%d generated=%d",
+                                    len(not_covered_classes)
+                                    if isinstance(not_covered_classes, list)
+                                    else 1,
+                                    len(missing_cues_to_generate),
+                                    len(generated_missing),
+                                )
+                                audio_cues.extend(generated_missing)
+                        except Exception as mf_e:
+                            logger.exception(
+                                "[EVAL] missing_coverage_fill failed row=%d exp=%s variant=%s: %s",
+                                row_index,
+                                exp.tag,
+                                spec_variant.tag,
+                                mf_e,
                             )
-                            logger.info(
-                                "Missing cue fill: candidates=%d to_generate=%d generated=%d",
-                                len(not_covered_classes) if isinstance(not_covered_classes, list) else 1,
-                                len(missing_cues_to_generate),
-                                len(generated_missing),
-                            )
-                            audio_cues.extend(generated_missing)
-                            
-
                         stage_missing_fill = time.perf_counter() - t2
                         _eval_debug_step(
                             "after_missing_coverage_fill",
@@ -795,7 +924,17 @@ def main() -> None:
                         exp.decide_audio_model_name,
                         spec_variant.tag,
                     )
-                    os.makedirs(audio_subdir, exist_ok=True)
+                    try:
+                        os.makedirs(audio_subdir, exist_ok=True)
+                    except OSError as dir_e:
+                        logger.exception(
+                            "[EVAL] makedirs failed row=%d variant=%s path=%s: %s",
+                            row_index,
+                            spec_variant.tag,
+                            audio_subdir,
+                            dir_e,
+                        )
+                        raise
                     audio_filename = f"row_{row_index}_{flags_hash}.wav"
                     audio_wav_path = os.path.join(audio_subdir, audio_filename)
                     _eval_debug_step("before_wav_export", path=audio_wav_path)
@@ -830,9 +969,18 @@ def main() -> None:
                     pipeline_total = time.perf_counter() - pipeline_start
 
                     audio_cues_final: List[Any] = audio_cues
-                    final_superimposed_cues_json = _to_json_string(
-                        [_cue_to_dict(c.audio_cue) for c in audio_cues_final]
-                    )
+                    try:
+                        final_superimposed_cues_json = _to_json_string(
+                            [_cue_to_dict(c.audio_cue) for c in audio_cues_final]
+                        )
+                    except Exception as cj_e:
+                        logger.exception(
+                            "[EVAL] final_superimposed_cues_json serialize failed row=%d variant=%s: %s",
+                            row_index,
+                            spec_variant.tag,
+                            cj_e,
+                        )
+                        final_superimposed_cues_json = "[]"
 
                     # Step 6: evaluate
                     _eval_debug_step(
@@ -848,34 +996,123 @@ def main() -> None:
                     ]
 
                     if evaluator is not None:
-                        # CLAP + general audio metrics
-                        metrics["clap_score"] = evaluator.get_clap_score(audio_base64, story_prompt)
-                        flatness, spec_entropy = evaluator.get_audio_richness(audio_base64)
-                        metrics["audio_richness_spectral_flatness"] = flatness
-                        metrics["audio_richness_spectral_entropy"] = spec_entropy
-                        metrics["noise_floor_db"] = evaluator.get_noise_floor(audio_base64)
-                        metrics["audio_onsets"] = evaluator.evaluate_sync_from_audio_base64(audio_base64)
+                        metric_errs: List[str] = []
 
-                        # YT coverage/sync metrics
-                        metrics["yt_coverage_score"] = evaluator.yt_coverage_score(story_prompt, yt_audio_cues)
-                        metrics["yt_sync_score"] = evaluator.yt_sync_score(story_prompt, yt_audio_cues)
-                        yt_cov_sync = evaluator.yt_coverage_and_sync_score(story_prompt, yt_audio_cues)
-                        metrics["yt_coverage_and_sync_coverage_score"] = yt_cov_sync.get("coverage_score", "")
-                        metrics["yt_coverage_and_sync_sync_score"] = yt_cov_sync.get("sync_score", "")
+                        v, err = _run_stage(
+                            "metric_clap_score",
+                            lambda: evaluator.get_clap_score(audio_base64, story_prompt),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        metrics["clap_score"] = v if err == "" else ""
+                        if err:
+                            metric_errs.append(err)
 
-                        cinematic = evaluator.get_cinematic_acoustic_metrics(audio_base64) or {}
-                        metrics["cinematic_dynamic_range_db"] = cinematic.get("dynamic_range_db", "")
-                        metrics["cinematic_crest_factor"] = cinematic.get("crest_factor", "")
-                        metrics["cinematic_spectral_flatness"] = cinematic.get("spectral_flatness", "")
-                        metrics["cinematic_spectral_entropy"] = cinematic.get("spectral_entropy", "")
-                        metrics["cinematic_spectral_centroid_hz"] = cinematic.get("spectral_centroid_hz", "")
+                        v, err = _run_stage(
+                            "metric_audio_richness",
+                            lambda: evaluator.get_audio_richness(audio_base64),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        if err == "" and v is not None:
+                            flatness, spec_entropy = v
+                            metrics["audio_richness_spectral_flatness"] = flatness
+                            metrics["audio_richness_spectral_entropy"] = spec_entropy
+                        else:
+                            metrics["audio_richness_spectral_flatness"] = ""
+                            metrics["audio_richness_spectral_entropy"] = ""
+                            if err:
+                                metric_errs.append(err)
 
-                        # KL divergence and FAD are skipped (no reference generated locally).
+                        v, err = _run_stage(
+                            "metric_noise_floor",
+                            lambda: evaluator.get_noise_floor(audio_base64),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        metrics["noise_floor_db"] = v if err == "" else ""
+                        if err:
+                            metric_errs.append(err)
+
+                        v, err = _run_stage(
+                            "metric_audio_onsets",
+                            lambda: evaluator.evaluate_sync_from_audio_base64(audio_base64),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        metrics["audio_onsets"] = v if err == "" else ""
+                        if err:
+                            metric_errs.append(err)
+
+                        v, err = _run_stage(
+                            "metric_yt_coverage",
+                            lambda: evaluator.yt_coverage_score(story_prompt, yt_audio_cues),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        metrics["yt_coverage_score"] = v if err == "" else ""
+                        if err:
+                            metric_errs.append(err)
+
+                        v, err = _run_stage(
+                            "metric_yt_sync",
+                            lambda: evaluator.yt_sync_score(story_prompt, yt_audio_cues),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        metrics["yt_sync_score"] = v if err == "" else ""
+                        if err:
+                            metric_errs.append(err)
+
+                        v, err = _run_stage(
+                            "metric_yt_coverage_and_sync",
+                            lambda: evaluator.yt_coverage_and_sync_score(story_prompt, yt_audio_cues),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        if err == "" and isinstance(v, dict):
+                            metrics["yt_coverage_and_sync_coverage_score"] = v.get("coverage_score", "")
+                            metrics["yt_coverage_and_sync_sync_score"] = v.get("sync_score", "")
+                        else:
+                            metrics["yt_coverage_and_sync_coverage_score"] = ""
+                            metrics["yt_coverage_and_sync_sync_score"] = ""
+                            if err:
+                                metric_errs.append(err)
+
+                        v, err = _run_stage(
+                            "metric_cinematic",
+                            lambda: evaluator.get_cinematic_acoustic_metrics(audio_base64),
+                            row_index=row_index,
+                            experiment_tag=exp.tag,
+                            variant_tag=spec_variant.tag,
+                        )
+                        if err == "":
+                            cinematic = v or {}
+                            metrics["cinematic_dynamic_range_db"] = cinematic.get("dynamic_range_db", "")
+                            metrics["cinematic_crest_factor"] = cinematic.get("crest_factor", "")
+                            metrics["cinematic_spectral_flatness"] = cinematic.get("spectral_flatness", "")
+                            metrics["cinematic_spectral_entropy"] = cinematic.get("spectral_entropy", "")
+                            metrics["cinematic_spectral_centroid_hz"] = cinematic.get("spectral_centroid_hz", "")
+                        else:
+                            metrics["cinematic_dynamic_range_db"] = ""
+                            metrics["cinematic_crest_factor"] = ""
+                            metrics["cinematic_spectral_flatness"] = ""
+                            metrics["cinematic_spectral_entropy"] = ""
+                            metrics["cinematic_spectral_centroid_hz"] = ""
+                            metric_errs.append(err)
+
                         metrics["spectral_kl_divergence"] = ""
                         metrics["fad_score"] = ""
 
                         stage_eval = time.perf_counter() - t5
-                        metrics["error"] = ""
+                        metrics["error"] = "; ".join(metric_errs) if metric_errs else ""
                     else:
                         stage_eval = time.perf_counter() - t5
                         for k in metric_fieldnames:
@@ -936,50 +1173,49 @@ def main() -> None:
                         audio_wav_path or "(none)",
                     )
                     _eval_debug_step("specialist_variant_complete", tag=spec_variant.tag)
-            except Exception as e:
-                # Append an error row to keep datasets comparable.
-                logger.exception(
-                    "[EVAL] pipeline error row=%d exp=%s type=%s: %s",
-                    row_index,
-                    exp.tag,
-                    type(e).__name__,
-                    e,
-                )
-                pipeline_total = time.perf_counter() - pipeline_start
-                err = "".join(traceback.format_exception_only(type(e), e)).strip()
-                # Even on error, record one row with baseline specialist info.
-                row = {
-                    "row_index": row_index,
-                    "source_url": record.get("source_url", ""),
-                    "video_title": record.get("video_title", ""),
-                    "clip_index": record.get("clip_index", ""),
-                    "story_prompt": story_prompt[:500],
-                    "decide_audio_model_name": exp.decide_audio_model_name,
-                    "experiment_tag": exp.tag,
-                    "run_type": run_type,
-                    **{f"flag_{n}": used_flags_resolved[n] for n in bool_flag_names},
-                    "used_flags_json": exp.used_flags_json(),
-                    "cue_decider_seconds": stage_decide,
-                    "initial_audio_generation_seconds": 0.0,
-                    "missing_fill_seconds": 0.0,
-                    "superimpose_seconds": 0.0,
-                    "audio_to_base64_seconds": 0.0,
-                    "pipeline_total_seconds": pipeline_total,
-                    "evaluation_seconds": 0.0,
-                    "total_seconds": pipeline_total,
-                    **{k: "" for k in metric_fieldnames},
-                    "sfx_model_name": baseline_specialist.sfx_model_name,
-                    "env_model_name": baseline_specialist.env_model_name,
-                    "music_model_name": baseline_specialist.music_model_name,
-                    "narrator_model_name": baseline_specialist.narrator_model_name,
-                    "specialist_model_variant_tag": baseline_specialist.tag,
-                    "llm_suggested_cues_json": llm_suggested_cues_json,
-                    "final_superimposed_cues_json": "[]",
-                    "audio_wav_path": "",
-                    "audio_export_error": "",
-                    "error": err or str(e),
-                }
-                append_row(output_csv, fieldnames, row)
+                except Exception as e:
+                    logger.exception(
+                        "[EVAL] variant pipeline error row=%d exp=%s variant=%s type=%s: %s",
+                        row_index,
+                        exp.tag,
+                        spec_variant.tag,
+                        type(e).__name__,
+                        e,
+                    )
+                    pipeline_total = time.perf_counter() - pipeline_start
+                    row = {
+                        "row_index": row_index,
+                        "source_url": record.get("source_url", ""),
+                        "video_title": record.get("video_title", ""),
+                        "clip_index": record.get("clip_index", ""),
+                        "story_prompt": story_prompt[:500],
+                        "decide_audio_model_name": exp.decide_audio_model_name,
+                        "experiment_tag": exp.tag,
+                        "run_type": run_type,
+                        **{f"flag_{n}": used_flags_resolved[n] for n in bool_flag_names},
+                        "used_flags_json": exp.used_flags_json(),
+                        "cue_decider_seconds": stage_decide,
+                        "initial_audio_generation_seconds": stage_initial_gen,
+                        "missing_fill_seconds": stage_missing_fill,
+                        "superimpose_seconds": stage_superimpose,
+                        "audio_to_base64_seconds": stage_audio_to_base64,
+                        "pipeline_total_seconds": pipeline_total,
+                        "evaluation_seconds": 0.0,
+                        "total_seconds": time.perf_counter() - t_variant_start,
+                        **{k: "" for k in metric_fieldnames},
+                        "sfx_model_name": spec_variant.sfx_model_name,
+                        "env_model_name": spec_variant.env_model_name,
+                        "music_model_name": spec_variant.music_model_name,
+                        "narrator_model_name": spec_variant.narrator_model_name,
+                        "specialist_model_variant_tag": spec_variant.tag,
+                        "llm_suggested_cues_json": llm_suggested_cues_json,
+                        "final_superimposed_cues_json": final_superimposed_cues_json,
+                        "audio_wav_path": audio_wav_path,
+                        "audio_export_error": audio_export_error,
+                        "error": _exc_for_csv(e),
+                    }
+                    append_row(output_csv, fieldnames, row)
+                    continue
 
             logger.info(
                 f"[row {row_index}] exp={exp.tag} decide_model={exp.decide_audio_model_name} "
@@ -988,5 +1224,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as fatal:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            force=True,
+        )
+        logging.getLogger(__name__).exception("[EVAL] fatal (uncaught): %s", fatal)
+        sys.exit(1)
 
