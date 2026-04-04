@@ -1,0 +1,25 @@
+# Ablation comparison: audio_richness_spectral_flatness
+objective: maximize
+specialist_model_variant_tag filter: 'baseline_tango2'
+
+## Best configuration by mean over prompts: toggle_use_llm_to_predict_align
+value: 0.0571537 (n_prompts=30)
+
+## Best configuration by peak single-prompt score: toggle_use_llm_to_predict_align
+value: 0.90085 (n_prompts=30)
+
+## Table
+                                              label  mean_over_prompts  best_single_prompt_value  n_prompts
+                                           baseline           0.037154                  0.424969         39
+                      decide_model_gemini-2.5-flash           0.026091                  0.132501         36
+                        toggle_fill_coverage_by_llm           0.021126                  0.083243         35
+        toggle_use_avg_llm_and_dsp_to_predict_align           0.023885                  0.158207         29
+toggle_use_dl_based_llm_and_dsp_alignment_predictor           0.021619                  0.110239         29
+                                     toggle_use_dsp           0.034076                  0.212225         35
+                    toggle_use_dsp_to_predict_align           0.028041                  0.176214         30
+                    toggle_use_llm_to_predict_align           0.057154                  0.900850         30
+                              toggle_use_movie_bgms           0.024297                  0.239298         32
+                                toggle_use_narrator           0.025663                  0.151053         31
+
+## Largest mean drop vs baseline
+toggle_fill_coverage_by_llm (delta=-0.0160281)

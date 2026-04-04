@@ -1,0 +1,25 @@
+# Ablation comparison: yt_sync_score
+objective: maximize
+specialist_model_variant_tag filter: 'baseline_tango2'
+
+## Best configuration by mean over prompts: baseline
+value: 0.00545548 (n_prompts=39)
+
+## Best configuration by peak single-prompt score: baseline
+value: 0.108696 (n_prompts=39)
+
+## Table
+                                              label  mean_over_prompts  best_single_prompt_value  n_prompts
+                                           baseline       5.455483e-03              1.086957e-01         39
+                      decide_model_gemini-2.5-flash       2.362559e-03              3.125000e-02         36
+                        toggle_fill_coverage_by_llm       8.995143e-13              2.910000e-11         35
+        toggle_use_avg_llm_and_dsp_to_predict_align       2.801690e-14              8.080000e-13         29
+toggle_use_dl_based_llm_and_dsp_alignment_predictor       1.657825e-03              4.807692e-02         29
+                                     toggle_use_dsp       2.304147e-04              8.064516e-03         35
+                    toggle_use_dsp_to_predict_align       2.148261e-03              6.097561e-02         30
+                    toggle_use_llm_to_predict_align       1.096491e-04              3.289474e-03         30
+                              toggle_use_movie_bgms       6.156250e-33              1.970000e-31         32
+                                toggle_use_narrator       8.488964e-04              2.631579e-02         31
+
+## Largest mean drop vs baseline
+toggle_use_movie_bgms (delta=-0.00545548)

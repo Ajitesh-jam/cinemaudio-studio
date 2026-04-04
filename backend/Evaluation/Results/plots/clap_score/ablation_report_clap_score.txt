@@ -1,0 +1,25 @@
+# Ablation comparison: clap_score
+objective: maximize
+specialist_model_variant_tag filter: 'baseline_tango2'
+
+## Best configuration by mean over prompts: decide_model_gemini-2.5-flash
+value: 0.227993 (n_prompts=36)
+
+## Best configuration by peak single-prompt score: toggle_use_dsp
+value: 0.562946 (n_prompts=35)
+
+## Table
+                                              label  mean_over_prompts  best_single_prompt_value  n_prompts
+                                           baseline           0.203973                  0.490150         39
+                      decide_model_gemini-2.5-flash           0.227993                  0.493514         36
+                        toggle_fill_coverage_by_llm           0.207519                  0.467377         35
+        toggle_use_avg_llm_and_dsp_to_predict_align           0.202017                  0.475684         29
+toggle_use_dl_based_llm_and_dsp_alignment_predictor           0.217431                  0.462083         29
+                                     toggle_use_dsp           0.208194                  0.562946         35
+                    toggle_use_dsp_to_predict_align           0.209378                  0.469441         30
+                    toggle_use_llm_to_predict_align           0.182508                  0.449153         30
+                              toggle_use_movie_bgms           0.207757                  0.491547         32
+                                toggle_use_narrator           0.212028                  0.501114         31
+
+## Largest mean drop vs baseline
+toggle_use_llm_to_predict_align (delta=-0.0214646)
