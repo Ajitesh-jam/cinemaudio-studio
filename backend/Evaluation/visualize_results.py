@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
 
 import matplotlib
@@ -87,6 +88,123 @@ def clean_results_df(
         mask = err.isna() | (err.astype(str).str.strip() == "")
         out = out[mask]
     return out
+
+
+def _norm_story_prompt(s: Any) -> str:
+    if s is None or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    return str(s).strip()
+
+
+def merge_tango_audioldm_baselines_into_df(
+    df: pd.DataFrame,
+    *,
+    tango_csv: Optional[str] = None,
+    audioldm_csv: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Append text-to-audio baseline rows from ``tango2_results.csv`` / ``audioldm2_results.csv``
+    (e.g. from ``baseline_models_evaluation.py``) so ablation plots include Tango2 and AudioLDM2.
+
+    For each baseline row, copies metadata from the first matching ``story_prompt`` in ``df``;
+    clears pipeline timing, YouTube, and cue JSON fields; sets ``experiment_tag`` /
+    ``specialist_model_variant_tag`` to ``tango2`` / ``AudioLDM2`` and ``tango2`` / ``audioldm2``.
+    Missing files or empty paths are skipped.
+    """
+    blocks: List[Tuple[str, str, str]] = []
+    if tango_csv and os.path.isfile(tango_csv):
+        blocks.append(("tango2", "tango2", tango_csv))
+    if audioldm_csv and os.path.isfile(audioldm_csv):
+        blocks.append(("AudioLDM2", "audioldm2", audioldm_csv))
+    if not blocks:
+        return df
+
+    cols = list(df.columns)
+    meta_src = df.copy()
+    meta_src["_sp"] = meta_src["story_prompt"].map(_norm_story_prompt)
+    meta_by_prompt = meta_src.drop_duplicates(subset=["_sp"], keep="first").set_index("_sp")
+
+    pipeline_blank = {
+        "cue_decider_seconds": pd.NA,
+        "initial_audio_generation_seconds": pd.NA,
+        "missing_fill_seconds": pd.NA,
+        "superimpose_seconds": pd.NA,
+        "audio_to_base64_seconds": pd.NA,
+        "pipeline_total_seconds": pd.NA,
+        "evaluation_seconds": pd.NA,
+    }
+    yt_blank = {
+        "yt_coverage_score": pd.NA,
+        "yt_sync_score": pd.NA,
+        "yt_coverage_and_sync_coverage_score": pd.NA,
+        "yt_coverage_and_sync_sync_score": pd.NA,
+    }
+    json_blank = {
+        "llm_suggested_cues_json": pd.NA,
+        "final_superimposed_cues_json": pd.NA,
+    }
+    baseline_metric_cols = [
+        "total_seconds",
+        "clap_score",
+        "audio_richness_spectral_flatness",
+        "audio_richness_spectral_entropy",
+        "noise_floor_db",
+        "audio_onsets",
+        "cinematic_dynamic_range_db",
+        "cinematic_crest_factor",
+        "cinematic_spectral_flatness",
+        "cinematic_spectral_entropy",
+        "cinematic_spectral_centroid_hz",
+        "spectral_kl_divergence",
+        "fad_score",
+        "error",
+    ]
+    optional_baseline = ("audio_wav_path", "audio_export_error")
+
+    appended: List[pd.DataFrame] = []
+    for experiment_tag, specialist_tag, path in blocks:
+        bdf = pd.read_csv(path, low_memory=False)
+        rows: List[Dict[str, Any]] = []
+        for _, br in bdf.iterrows():
+            key = _norm_story_prompt(br.get("story_prompt"))
+            out: Dict[str, Any] = {c: pd.NA for c in cols}
+            if key and key in meta_by_prompt.index:
+                mr = meta_by_prompt.loc[key]
+                for c in cols:
+                    if c in mr.index:
+                        out[c] = mr[c]
+            out["story_prompt"] = br.get("story_prompt", pd.NA)
+            out["experiment_tag"] = experiment_tag
+            out["specialist_model_variant_tag"] = specialist_tag
+            out["run_type"] = "baseline_model"
+            for k, v in pipeline_blank.items():
+                if k in out:
+                    out[k] = v
+            for k, v in yt_blank.items():
+                if k in out:
+                    out[k] = v
+            for k, v in json_blank.items():
+                if k in out:
+                    out[k] = v
+            for m in baseline_metric_cols:
+                if m in cols and m in br.index:
+                    out[m] = br[m]
+            for m in optional_baseline:
+                if m in cols and m in br.index and pd.notna(br[m]) and str(br[m]).strip() != "":
+                    out[m] = br[m]
+            rows.append(out)
+        appended.append(pd.DataFrame(rows, columns=cols))
+
+    return pd.concat([df] + appended, ignore_index=True)
+
+
+def _specialist_for_experiment_tag(ex_tag: str, pipeline_specialist: str) -> str:
+    """Pipeline ablations use ``pipeline_specialist`` (e.g. baseline_tango2); pure TTS baselines use their own tag."""
+    if ex_tag == "tango2":
+        return "tango2"
+    if ex_tag == "AudioLDM2":
+        return "audioldm2"
+    return pipeline_specialist
 
 
 def infer_baseline_config(df: pd.DataFrame) -> Dict[str, Any]:
@@ -261,6 +379,10 @@ def _ordered_experiment_tags(tags: Iterable[str]) -> List[str]:
             return (1, t)
         if t.startswith("toggle_"):
             return (2, t)
+        if t == "tango2":
+            return (4, "0")
+        if t == "AudioLDM2":
+            return (4, "1")
         return (3, t)
 
     return sorted(ordered, key=sort_key)
@@ -295,8 +417,9 @@ def _iter_ablation_per_prompt_series(
 
     def one(ex_tag: str, label: Optional[str] = None) -> Optional[Tuple[str, pd.Series]]:
         lab = label or ex_tag
+        spec = _specialist_for_experiment_tag(ex_tag, specialist_model_variant_tag)
         sub = work[
-            (tag_series == ex_tag) & (work["specialist_model_variant_tag"].astype(str) == specialist_model_variant_tag)
+            (tag_series == ex_tag) & (work["specialist_model_variant_tag"].astype(str) == spec)
         ]
         pm = _per_prompt_means_for_slice(sub, metric_col)
         if pm.empty:
@@ -462,6 +585,304 @@ def mean_rank_per_ablation(
     return out.sort_values("mean_rank", ascending=True, ignore_index=True)
 
 
+def _iter_ablation_slices(
+    work: pd.DataFrame,
+    specialist_model_variant_tag: str,
+    include_decide_model: bool,
+    include_specialist_ablations: bool,
+) -> Iterable[Tuple[str, pd.DataFrame]]:
+    """
+    Same ablation order / filters as ``compare_ablations_for_metric``; yields (label, slice_df).
+    """
+    tag_series = work["experiment_tag"].astype(str)
+    all_tags = _ordered_experiment_tags(tag_series.unique())
+
+    def one(ex_tag: str, label: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+        lab = label or ex_tag
+        spec = _specialist_for_experiment_tag(ex_tag, specialist_model_variant_tag)
+        sub = work[
+            (tag_series == ex_tag) & (work["specialist_model_variant_tag"].astype(str) == spec)
+        ]
+        return lab, sub
+
+    for ex_tag in all_tags:
+        if ex_tag == "baseline":
+            yield one("baseline")
+            continue
+        if ex_tag.startswith("decide_model_"):
+            if include_decide_model:
+                yield one(ex_tag)
+            continue
+        if ex_tag.startswith("toggle_"):
+            yield one(ex_tag)
+            continue
+        yield one(ex_tag)
+
+    if include_specialist_ablations:
+        baseline_only = work[tag_series == "baseline"]
+        spec_tags = sorted(
+            baseline_only["specialist_model_variant_tag"].dropna().astype(str).unique(),
+            key=lambda x: (0 if x == "baseline_tango2" else 1, x),
+        )
+        for st in spec_tags:
+            if st == specialist_model_variant_tag:
+                continue
+            sub = baseline_only[baseline_only["specialist_model_variant_tag"].astype(str) == st]
+            lab = f"baseline | specialist={st}"
+            yield lab, sub
+
+
+def ablation_mean_matrix_multi_metric(
+    df: pd.DataFrame,
+    metrics: Sequence[str],
+    *,
+    specialist_model_variant_tag: str = "baseline_tango2",
+    include_decide_model: bool = True,
+    include_specialist_ablations: bool = False,
+    exclude_errors: bool = True,
+    tango_baseline_csv: Optional[str] = None,
+    audioldm_baseline_csv: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Rows = ablation labels (same order as bar charts), columns = metrics.
+    Each cell is macro mean over prompts (mean of per-prompt means), matching
+    ``compare_ablations_for_metric`` aggregation.
+    """
+    merged = merge_tango_audioldm_baselines_into_df(
+        df,
+        tango_csv=tango_baseline_csv,
+        audioldm_csv=audioldm_baseline_csv,
+    )
+    work = clean_results_df(merged, exclude_errors=exclude_errors) if exclude_errors else merged.copy()
+    rows: List[Dict[str, Any]] = []
+    index: List[str] = []
+    for label, sub in _iter_ablation_slices(
+        work,
+        specialist_model_variant_tag=specialist_model_variant_tag,
+        include_decide_model=include_decide_model,
+        include_specialist_ablations=include_specialist_ablations,
+    ):
+        row: Dict[str, Any] = {}
+        for m in metrics:
+            if m not in work.columns:
+                row[m] = float("nan")
+                continue
+            pm = _per_prompt_means_for_slice(sub, m)
+            row[m] = float(pm.mean()) if not pm.empty else float("nan")
+        rows.append(row)
+        index.append(label)
+    return pd.DataFrame(rows, index=index)
+
+
+def plot_ablation_metrics_overlay(
+    df: pd.DataFrame | str,
+    metrics: Sequence[str],
+    *,
+    specialist_model_variant_tag: str = "baseline_tango2",
+    include_decide_model: bool = True,
+    include_specialist_ablations: bool = False,
+    exclude_errors: bool = True,
+    tango_baseline_csv: Optional[str] = None,
+    audioldm_baseline_csv: Optional[str] = None,
+    scale_factors: Optional[Dict[str, float]] = None,
+    colors: Optional[Dict[str, str]] = None,
+    output_path: Optional[str] = None,
+    dpi: int = 150,
+    figsize: Optional[Tuple[float, float]] = None,
+    title: str = "Mean metric vs ablation (scaled, same Y axis)",
+    ylabel: str = "Scaled mean (tune scale_factors)",
+    ylim: Optional[Tuple[float, float]] = None,
+    legend_outside: bool = True,
+) -> Tuple[plt.Figure, pd.DataFrame]:
+    """
+    Line plot: x = every ablation in ``final_results`` (plus optional Tango2/AudioLDM CSV rows),
+    one colored line per metric.
+
+    ``df`` may be a path to ``final_results.csv`` or a DataFrame. Use ``scale_factors`` to
+    align different units on one axis (same defaults as Tango-vs-AudioLDM overlay).
+    """
+    if isinstance(df, str):
+        df = load_results_csv(df)
+
+    default_scales: Dict[str, float] = {
+        "total_seconds": 1.0 / 200.0,
+        "clap_score": 1.0,
+        "audio_richness_spectral_flatness": 1000.0,
+        "audio_richness_spectral_entropy": 1.0 / 10.0,
+        "noise_floor_db": -1.0 / 40.0,
+        "audio_onsets": 1.0 / 100.0,
+        "cinematic_dynamic_range_db": 1.0 / 100.0,
+        "cinematic_crest_factor": 1.0 / 15.0,
+        "cinematic_spectral_flatness": 1000.0,
+        "cinematic_spectral_entropy": 1.0 / 10.0,
+        "cinematic_spectral_centroid_hz": 1.0 / 3000.0,
+    }
+    scales = {**default_scales, **(scale_factors or {})}
+
+    default_colors: Dict[str, str] = {
+        "clap_score": "black",
+        "audio_richness_spectral_flatness": "red",
+        "audio_richness_spectral_entropy": "darkorange",
+        "total_seconds": "steelblue",
+        "noise_floor_db": "seagreen",
+        "audio_onsets": "purple",
+        "cinematic_dynamic_range_db": "saddlebrown",
+        "cinematic_crest_factor": "hotpink",
+        "cinematic_spectral_flatness": "crimson",
+        "cinematic_spectral_entropy": "goldenrod",
+        "cinematic_spectral_centroid_hz": "navy",
+    }
+    palette = {**default_colors, **(colors or {})}
+
+    mat = ablation_mean_matrix_multi_metric(
+        df,
+        list(metrics),
+        specialist_model_variant_tag=specialist_model_variant_tag,
+        include_decide_model=include_decide_model,
+        include_specialist_ablations=include_specialist_ablations,
+        exclude_errors=exclude_errors,
+        tango_baseline_csv=tango_baseline_csv,
+        audioldm_baseline_csv=audioldm_baseline_csv,
+    )
+    if mat.empty:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.set_title("No ablation rows")
+        return fig, mat
+    
+    print(mat.columns)
+    print(metrics)
+
+    n = len(mat)
+    x = np.arange(n, dtype=float)
+    print("x")
+    print(x)
+    labels = mat.index.astype(str).tolist()
+    w = max(12.0, 0.35 * n)
+    h = 6.0
+    fig, ax = plt.subplots(figsize=figsize or (w, h))
+    fallback = plt.cm.tab10(np.linspace(0, 0.9, max(10, len(metrics))))
+
+    for i, m in enumerate(metrics):
+        if m not in mat.columns:
+            continue
+        raw = mat[m].to_numpy(dtype=float)
+        s = float(scales.get(m, 1.0))
+        y = raw * s
+        c = palette.get(m, fallback[i % len(fallback)])
+        # print(" for metric ", m, " y is ", y," for ablation ", labels)
+        
+        print("--------------------------------")
+        print(" for metric ", m, " and scale factor ", s)
+        for j in range(len(y)):
+            print(" for ablation ", labels[j], " raw mean value is ", y[j]/s)
+        print("--------------------------------")
+        ax.plot(x, y, "o-", color=c, linewidth=1.8, markersize=5, label=m)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=55, ha="right", fontsize=7)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    ax.grid(True, alpha=0.3)
+    if legend_outside:
+        ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=7)
+    else:
+        ax.legend(fontsize=7)
+    fig.tight_layout()
+    if output_path:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    return fig, mat
+
+
+def plot_tango_audioldm_metrics_overlay(
+    metrics: Sequence[str],
+    *,
+    tango_csv: str | Path,
+    audioldm_csv: str | Path,
+    scale_factors: Optional[Dict[str, float]] = None,
+    colors: Optional[Dict[str, str]] = None,
+    model_labels: Tuple[str, str] = ("Tango2", "AudioLDM2"),
+    figsize: Tuple[float, float] = (7, 5),
+    ylabel: str = "Scaled mean (see scale_factors)",
+    title: str = "Mean metric vs model (scaled to common axis)",
+    legend_outside: bool = True,
+    ylim: Optional[Tuple[float, float]] = None,
+    output_path: Optional[str] = None,
+    dpi: int = 150,
+) -> plt.Figure:
+    """
+    Two-point overlay (Tango2 vs AudioLDM2 only) using baseline CSVs — same scaling defaults as
+    :func:`plot_ablation_metrics_overlay`.
+    """
+    tdf = pd.read_csv(tango_csv, low_memory=False)
+    adf = pd.read_csv(audioldm_csv, low_memory=False)
+
+    default_scales: Dict[str, float] = {
+        "total_seconds": 1.0 / 200.0,
+        "clap_score": 1.0,
+        "audio_richness_spectral_flatness": 1000.0,
+        "audio_richness_spectral_entropy": 1.0 / 10.0,
+        "noise_floor_db": -1.0 / 40.0,
+        "audio_onsets": 1.0 / 100.0,
+        "cinematic_dynamic_range_db": 1.0 / 100.0,
+        "cinematic_crest_factor": 1.0 / 15.0,
+        "cinematic_spectral_flatness": 1000.0,
+        "cinematic_spectral_entropy": 1.0 / 10.0,
+        "cinematic_spectral_centroid_hz": 1.0 / 3000.0,
+    }
+    scales = {**default_scales, **(scale_factors or {})}
+
+    default_colors: Dict[str, str] = {
+        "clap_score": "black",
+        "audio_richness_spectral_flatness": "red",
+        "audio_richness_spectral_entropy": "darkorange",
+        "total_seconds": "steelblue",
+        "noise_floor_db": "seagreen",
+        "audio_onsets": "purple",
+        "cinematic_dynamic_range_db": "saddlebrown",
+        "cinematic_crest_factor": "hotpink",
+        "cinematic_spectral_flatness": "crimson",
+        "cinematic_spectral_entropy": "goldenrod",
+        "cinematic_spectral_centroid_hz": "navy",
+    }
+    palette = {**default_colors, **(colors or {})}
+    fallback = plt.cm.tab10(np.linspace(0, 0.9, max(10, len(metrics))))
+
+    x = np.arange(2, dtype=float)
+    fig, ax = plt.subplots(figsize=figsize)
+    for i, m in enumerate(metrics):
+        if m not in tdf.columns or m not in adf.columns:
+            raise KeyError(f"Metric {m!r} missing from one of the CSVs")
+        vt = pd.to_numeric(tdf[m], errors="coerce").dropna()
+        va = pd.to_numeric(adf[m], errors="coerce").dropna()
+        if vt.empty or va.empty:
+            continue
+        mu_t, mu_a = float(vt.mean()), float(va.mean())
+        s = float(scales.get(m, 1.0))
+        y = np.array([mu_t * s, mu_a * s], dtype=float)
+        c = palette.get(m, fallback[i % len(fallback)])
+        ax.plot(x, y, "o-", color=c, linewidth=2.0, markersize=7, label=m)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(list(model_labels))
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    ax.grid(True, alpha=0.3)
+    if legend_outside:
+        ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+    else:
+        ax.legend(fontsize=8)
+    fig.tight_layout()
+    if output_path:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    return fig
+
+
 def plot_win_count_bars(
     wins_summary: pd.DataFrame,
     *,
@@ -603,8 +1024,9 @@ def compare_ablations_for_metric(
 
     def process_tag(ex_tag: str, label: Optional[str] = None) -> None:
         lab = label or ex_tag
+        spec = _specialist_for_experiment_tag(ex_tag, specialist_model_variant_tag)
         sub = work[
-            (tag_series == ex_tag) & (work["specialist_model_variant_tag"].astype(str) == specialist_model_variant_tag)
+            (tag_series == ex_tag) & (work["specialist_model_variant_tag"].astype(str) == spec)
         ]
         pm = _per_prompt_means_for_slice(sub, metric_col)
         if pm.empty:
@@ -754,13 +1176,24 @@ def compare_ablations_for_metric_extended(
     exclude_errors: bool = True,
     dpi: int = 150,
     zscore_heatmap_rows: bool = True,
+    tango_baseline_csv: Optional[str] = None,
+    audioldm_baseline_csv: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Writes outputs under ``output_dir / <metric_sanitized> /``:
     original ablation bar charts + report, plus per-prompt matrix CSV, win summary CSV,
     mean-rank table, consensus plots (heatmap, win-rate bars, margin vs baseline).
     Returns (summary, report_text, matrix, wins_summary, mean_ranks).
+
+    If ``tango_baseline_csv`` / ``audioldm_baseline_csv`` point to existing files
+    (e.g. ``Results/tango2_results.csv``), those rows are merged in so plots include
+    pure Tango2 / AudioLDM2 text-to-audio baselines (``experiment_tag`` tango2 / AudioLDM2).
     """
+    df = merge_tango_audioldm_baselines_into_df(
+        df,
+        tango_csv=tango_baseline_csv,
+        audioldm_csv=audioldm_baseline_csv,
+    )
     obj = resolve_objective(metric_col, objective)
     run_dir = os.path.join(output_dir, _sanitize_metric_for_path(metric_col))
     os.makedirs(run_dir, exist_ok=True)
@@ -874,6 +1307,18 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Skip per-prompt matrix, win rates, heatmap (only mean/best ablation bars)",
     )
+    p.add_argument(
+        "--tango-baseline-csv",
+        type=str,
+        default="",
+        help="Path to tango2_results.csv; default: Results/tango2_results.csv next to this script (if missing, skipped)",
+    )
+    p.add_argument(
+        "--audioldm-baseline-csv",
+        type=str,
+        default="",
+        help="Path to audioldm2_results.csv; default: Results/audioldm2_results.csv (if missing, skipped)",
+    )
     return p.parse_args(argv)
 
 
@@ -889,9 +1334,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     df = load_results_csv(csv_path)
     df_clean = clean_results_df(df)
 
+    tango_csv = (args.tango_baseline_csv or "").strip() or os.path.join(here, "Results", "tango2_results.csv")
+    audioldm_csv = (args.audioldm_baseline_csv or "").strip() or os.path.join(here, "Results", "audioldm2_results.csv")
+    tango_opt = tango_csv if os.path.isfile(tango_csv) else None
+    audioldm_opt = audioldm_csv if os.path.isfile(audioldm_csv) else None
+
     if args.no_consensus:
-        compare_ablations_for_metric(
+        df_for_ab = merge_tango_audioldm_baselines_into_df(
             df_clean,
+            tango_csv=tango_opt,
+            audioldm_csv=audioldm_opt,
+        )
+        compare_ablations_for_metric(
+            df_for_ab,
             args.metric,
             objective=obj,
             specialist_model_variant_tag=args.specialist_tag,
@@ -909,6 +1364,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             output_dir=outdir,
             include_decide_model=not args.no_decide_model,
             include_specialist_ablations=args.specialist_ablations,
+            tango_baseline_csv=tango_opt,
+            audioldm_baseline_csv=audioldm_opt,
         )
         cfg_base = os.path.join(outdir, _sanitize_metric_for_path(args.metric))
 
