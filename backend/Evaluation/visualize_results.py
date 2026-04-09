@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
@@ -674,6 +675,14 @@ def ablation_mean_matrix_multi_metric(
     return pd.DataFrame(rows, index=index)
 
 
+def _abbreviate_label_middle(s: str, head: int = 4, tail: int = 3) -> str:
+    """Short tick label: ``baseline`` → ``base…ine`` when longer than head+tail."""
+    t = str(s)
+    if len(t) <= head + tail:
+        return t
+    return f"{t[:head]}…{t[-tail:]}"
+
+
 def plot_ablation_metrics_overlay(
     df: pd.DataFrame | str,
     metrics: Sequence[str],
@@ -693,6 +702,11 @@ def plot_ablation_metrics_overlay(
     ylabel: str = "Scaled mean (tune scale_factors)",
     ylim: Optional[Tuple[float, float]] = None,
     legend_outside: bool = True,
+    short_label_head: int = 4,
+    short_label_tail: int = 3,
+    show_ablation_key: bool = True,
+    ablation_key_chars_per_line: int = 52,
+    ablation_key_fontsize: float = 6.0,
 ) -> Tuple[plt.Figure, pd.DataFrame]:
     """
     Line plot: x = every ablation in ``final_results`` (plus optional Tango2/AudioLDM CSV rows),
@@ -700,6 +714,11 @@ def plot_ablation_metrics_overlay(
 
     ``df`` may be a path to ``final_results.csv`` or a DataFrame. Use ``scale_factors`` to
     align different units on one axis (same defaults as Tango-vs-AudioLDM overlay).
+
+    X-axis uses middle-abbreviated names (e.g. ``baseline`` → ``base…ine``). When
+    ``show_ablation_key`` is True, a panel beside the plot lists the full ablation strings;
+    with ``legend_outside`` True, the metric legend is placed below that list (same column)
+    so the figure stays narrow.
     """
     if isinstance(df, str):
         df = load_results_csv(df)
@@ -748,18 +767,58 @@ def plot_ablation_metrics_overlay(
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.set_title("No ablation rows")
         return fig, mat
-    
-    print(mat.columns)
-    print(metrics)
 
     n = len(mat)
     x = np.arange(n, dtype=float)
-    print("x")
-    print(x)
-    labels = mat.index.astype(str).tolist()
-    w = max(12.0, 0.35 * n)
-    h = 6.0
-    fig, ax = plt.subplots(figsize=figsize or (w, h))
+    labels_full = mat.index.astype(str).tolist()
+    tick_labels = [
+        _abbreviate_label_middle(lb, head=short_label_head, tail=short_label_tail)
+        for lb in labels_full
+    ]
+    w_main = max(8.0, 0.22 * n)
+    h = 6.5
+    key_w = 2.85 if show_ablation_key else 0.0
+    default_figsize = (w_main + key_w, h)
+    fig = plt.figure(figsize=figsize or default_figsize)
+    ax_leg = None
+    if show_ablation_key:
+        if legend_outside:
+            # Right column: ablation key on top, metric legend below (saves horizontal space).
+            gs = fig.add_gridspec(
+                2,
+                2,
+                width_ratios=[w_main, key_w],
+                height_ratios=[7.5, 1.25],
+                wspace=0.08,
+                hspace=0.18,
+            )
+            ax = fig.add_subplot(gs[:, 0])
+            ax_key = fig.add_subplot(gs[0, 1])
+            ax_leg = fig.add_subplot(gs[1, 1])
+            ax_key.axis("off")
+            ax_leg.axis("off")
+        else:
+            gs = fig.add_gridspec(1, 2, width_ratios=[w_main, key_w], wspace=0.08)
+            ax = fig.add_subplot(gs[0, 0])
+            ax_key = fig.add_subplot(gs[0, 1])
+        ax_key.axis("off")
+        key_body = "\n\n".join(
+            textwrap.fill(f"{tick_labels[i]} → {labels_full[i]}", width=ablation_key_chars_per_line)
+            for i in range(n)
+        )
+        ax_key.text(
+            0.0,
+            1.0,
+            key_body,
+            transform=ax_key.transAxes,
+            va="top",
+            ha="left",
+            fontsize=ablation_key_fontsize,
+            family="monospace",
+        )
+    else:
+        ax = fig.add_subplot(1, 1, 1)
+
     fallback = plt.cm.tab10(np.linspace(0, 0.9, max(10, len(metrics))))
 
     for i, m in enumerate(metrics):
@@ -769,24 +828,28 @@ def plot_ablation_metrics_overlay(
         s = float(scales.get(m, 1.0))
         y = raw * s
         c = palette.get(m, fallback[i % len(fallback)])
-        # print(" for metric ", m, " y is ", y," for ablation ", labels)
-        
-        print("--------------------------------")
-        print(" for metric ", m, " and scale factor ", s)
-        for j in range(len(y)):
-            print(" for ablation ", labels[j], " raw mean value is ", y[j]/s)
-        print("--------------------------------")
         ax.plot(x, y, "o-", color=c, linewidth=1.8, markersize=5, label=m)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=55, ha="right", fontsize=7)
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=7)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     if ylim is not None:
         ax.set_ylim(ylim)
     ax.grid(True, alpha=0.3)
     if legend_outside:
-        ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=7)
+        if ax_leg is not None:
+            handles, labels_for_leg = ax.get_legend_handles_labels()
+            ax_leg.legend(
+                handles,
+                labels_for_leg,
+                loc="upper left",
+                fontsize=7,
+                frameon=True,
+                borderaxespad=0.0,
+            )
+        else:
+            ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=7)
     else:
         ax.legend(fontsize=7)
     fig.tight_layout()
