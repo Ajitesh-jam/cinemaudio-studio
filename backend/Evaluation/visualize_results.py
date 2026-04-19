@@ -113,10 +113,12 @@ def merge_tango_audioldm_baselines_into_df(
     Missing files or empty paths are skipped.
     """
     blocks: List[Tuple[str, str, str]] = []
-    if tango_csv and os.path.isfile(tango_csv):
-        blocks.append(("tango2", "tango2", tango_csv))
     if audioldm_csv and os.path.isfile(audioldm_csv):
         blocks.append(("AudioLDM2", "audioldm2", audioldm_csv))
+
+        
+    if tango_csv and os.path.isfile(tango_csv):
+        blocks.append(("tango2", "tango2", tango_csv))
     if not blocks:
         return df
 
@@ -305,11 +307,11 @@ def plot_metric_for_configuration(
     prompts = g["story_prompt"].astype(str).tolist()
     values = g[metric_col].astype(float).tolist()
 
-    def short_label(p: str, i: int) -> str:
-        s = p if len(p) <= prompt_label_max_len else p[: prompt_label_max_len - 1] + "…"
-        return f"{i + 1}. {s}"
+    # def short_label(p: str, i: int) -> str:
+    #     s = p if len(p) <= prompt_label_max_len else p[: prompt_label_max_len - 1] + "…"
+    #     return f"{i + 1}. {s}"
 
-    labels = [short_label(p, i) for i, p in enumerate(prompts)]
+    labels = [(p, i) for i, p in enumerate(prompts)]
     fig_h = max(6.0, 0.22 * len(labels))
     fig, ax = plt.subplots(figsize=(10, fig_h))
     ax.barh(range(len(labels)), values, color="steelblue")
@@ -381,9 +383,9 @@ def _ordered_experiment_tags(tags: Iterable[str]) -> List[str]:
         if t.startswith("toggle_"):
             return (2, t)
         if t == "tango2":
-            return (4, "0")
-        if t == "AudioLDM2":
             return (4, "1")
+        if t == "AudioLDM2":
+            return (4, "0")
         return (3, t)
 
     return sorted(ordered, key=sort_key)
@@ -675,6 +677,40 @@ def ablation_mean_matrix_multi_metric(
     return pd.DataFrame(rows, index=index)
 
 
+def _default_ablation_overlay_scales() -> Dict[str, float]:
+    """Same scaling defaults as :func:`plot_ablation_metrics_overlay` / scaled CSV export."""
+    return {
+        "total_seconds": 1.0 / 200.0,
+        "clap_score": 1.0,
+        "audio_richness_spectral_flatness": 1000.0,
+        "audio_richness_spectral_entropy": 1.0 / 10.0,
+        "noise_floor_db": -1.0 / 40.0,
+        "audio_onsets": 1.0 / 100.0,
+        "cinematic_dynamic_range_db": 1.0 / 100.0,
+        "cinematic_crest_factor": 1.0 / 15.0,
+        "cinematic_spectral_flatness": 1000.0,
+        "cinematic_spectral_entropy": 1.0 / 10.0,
+        "cinematic_spectral_centroid_hz": 1.0 / 3000.0,
+    }
+
+
+def _default_ablation_overlay_colors() -> Dict[str, str]:
+    """Same metric line colors as :func:`plot_ablation_metrics_overlay`."""
+    return {
+        "clap_score": "black",
+        "audio_richness_spectral_flatness": "red",
+        "audio_richness_spectral_entropy": "darkorange",
+        "total_seconds": "steelblue",
+        "noise_floor_db": "seagreen",
+        "audio_onsets": "purple",
+        "cinematic_dynamic_range_db": "saddlebrown",
+        "cinematic_crest_factor": "hotpink",
+        "cinematic_spectral_flatness": "crimson",
+        "cinematic_spectral_entropy": "goldenrod",
+        "cinematic_spectral_centroid_hz": "navy",
+    }
+
+
 def _abbreviate_label_middle(s: str, head: int = 4, tail: int = 3) -> str:
     """Short tick label: ``baseline`` → ``base…ine`` when longer than head+tail."""
     t = str(s)
@@ -696,6 +732,8 @@ def plot_ablation_metrics_overlay(
     scale_factors: Optional[Dict[str, float]] = None,
     colors: Optional[Dict[str, str]] = None,
     output_path: Optional[str] = None,
+    ablations_csv_path: Optional[str] = None,
+    ablations_scaled_csv_path: Optional[str] = None,
     dpi: int = 150,
     figsize: Optional[Tuple[float, float]] = None,
     title: str = "Mean metric vs ablation (scaled, same Y axis)",
@@ -719,39 +757,20 @@ def plot_ablation_metrics_overlay(
     ``show_ablation_key`` is True, a panel beside the plot lists the full ablation strings;
     with ``legend_outside`` True, the metric legend is placed below that list (same column)
     so the figure stays narrow.
+
+    If ``ablations_csv_path`` is set, the same macro-mean matrix as returned (rows = ablation,
+    columns = metrics, raw values before plot scaling) is written as CSV with an ``ablation``
+    column for downstream plotting.
+
+    If ``ablations_scaled_csv_path`` is set, a second CSV is written with the same layout but
+    each metric column multiplied by the same ``scale_factors`` (including defaults) used in
+    the overlay line plot.
     """
     if isinstance(df, str):
         df = load_results_csv(df)
 
-    default_scales: Dict[str, float] = {
-        "total_seconds": 1.0 / 200.0,
-        "clap_score": 1.0,
-        "audio_richness_spectral_flatness": 1000.0,
-        "audio_richness_spectral_entropy": 1.0 / 10.0,
-        "noise_floor_db": -1.0 / 40.0,
-        "audio_onsets": 1.0 / 100.0,
-        "cinematic_dynamic_range_db": 1.0 / 100.0,
-        "cinematic_crest_factor": 1.0 / 15.0,
-        "cinematic_spectral_flatness": 1000.0,
-        "cinematic_spectral_entropy": 1.0 / 10.0,
-        "cinematic_spectral_centroid_hz": 1.0 / 3000.0,
-    }
-    scales = {**default_scales, **(scale_factors or {})}
-
-    default_colors: Dict[str, str] = {
-        "clap_score": "black",
-        "audio_richness_spectral_flatness": "red",
-        "audio_richness_spectral_entropy": "darkorange",
-        "total_seconds": "steelblue",
-        "noise_floor_db": "seagreen",
-        "audio_onsets": "purple",
-        "cinematic_dynamic_range_db": "saddlebrown",
-        "cinematic_crest_factor": "hotpink",
-        "cinematic_spectral_flatness": "crimson",
-        "cinematic_spectral_entropy": "goldenrod",
-        "cinematic_spectral_centroid_hz": "navy",
-    }
-    palette = {**default_colors, **(colors or {})}
+    scales = {**_default_ablation_overlay_scales(), **(scale_factors or {})}
+    palette = {**_default_ablation_overlay_colors(), **(colors or {})}
 
     mat = ablation_mean_matrix_multi_metric(
         df,
@@ -766,6 +785,16 @@ def plot_ablation_metrics_overlay(
     if mat.empty:
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.set_title("No ablation rows")
+        if ablations_csv_path:
+            Path(ablations_csv_path).parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(columns=["ablation", *list(metrics)]).to_csv(
+                ablations_csv_path, index=False
+            )
+        if ablations_scaled_csv_path:
+            Path(ablations_scaled_csv_path).parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(columns=["ablation", *list(metrics)]).to_csv(
+                ablations_scaled_csv_path, index=False
+            )
         return fig, mat
 
     n = len(mat)
@@ -856,6 +885,18 @@ def plot_ablation_metrics_overlay(
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    if ablations_csv_path:
+        Path(ablations_csv_path).parent.mkdir(parents=True, exist_ok=True)
+        mat.rename_axis("ablation").reset_index().to_csv(ablations_csv_path, index=False)
+    if ablations_scaled_csv_path:
+        Path(ablations_scaled_csv_path).parent.mkdir(parents=True, exist_ok=True)
+        scaled: Dict[str, Any] = {
+            m: mat[m].to_numpy(dtype=float) * float(scales.get(m, 1.0))
+            for m in metrics
+            if m in mat.columns
+        }
+        scaled_df = pd.DataFrame(scaled, index=mat.index)
+        scaled_df.rename_axis("ablation").reset_index().to_csv(ablations_scaled_csv_path, index=False)
     return fig, mat
 
 

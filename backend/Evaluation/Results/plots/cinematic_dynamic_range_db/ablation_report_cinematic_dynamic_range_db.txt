@@ -20,8 +20,8 @@ toggle_use_dl_based_llm_and_dsp_alignment_predictor         102.598148          
                               toggle_use_movie_bgms          96.568657                200.047863         32
                                 toggle_use_narrator         100.978692                199.014075         31
                           BackgroundMellow_baseline         103.368149                198.980138         39
-                                             tango2           9.406179                 11.013596         39
                                           AudioLDM2          68.152582                 78.533745         39
+                                             tango2           9.406179                 11.013596         39
 ## Per-prompt consensus (intersection only)
 prompts_in_intersection: 29
 ablations: 12
@@ -38,8 +38,8 @@ toggle_use_dl_based_llm_and_dsp_alignment_predictor                   5         
                                      toggle_use_dsp                   1                     1.0         0.034483             0.034483
                                 toggle_use_narrator                   1                     1.0         0.034483             0.034483
                           BackgroundMellow_baseline                   0                     0.0         0.000000             0.000000
-                                             tango2                   0                     0.0         0.000000             0.000000
                                           AudioLDM2                   0                     0.0         0.000000             0.000000
+                                             tango2                   0                     0.0         0.000000             0.000000
 
 ### Mean rank (1 = best)
                                            ablation  mean_rank

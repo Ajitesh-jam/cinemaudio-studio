@@ -20,8 +20,8 @@ toggle_use_dl_based_llm_and_dsp_alignment_predictor           0.217431          
                               toggle_use_movie_bgms           0.207757                  0.491547         32
                                 toggle_use_narrator           0.212028                  0.501114         31
                           BackgroundMellow_baseline           0.203973                  0.490150         39
-                                             tango2           0.223747                  0.413576         39
                                           AudioLDM2           0.333313                  0.509806         39
+                                             tango2           0.223747                  0.413576         39
 ## Per-prompt consensus (intersection only)
 prompts_in_intersection: 29
 ablations: 12
