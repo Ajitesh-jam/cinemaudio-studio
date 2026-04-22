@@ -10,11 +10,29 @@ After each row is updated, the CSV is rewritten atomically so you can stop and r
 rows with missing scores or missing ``yt_gemini_cues_json`` are finished on the next run;
 cached cues are reused (no second Gemini call) unless you pass ``--force``.
 
+Gemini ``generate_content`` is retried on transient HTTP errors (429/502/503/504, etc.)
+with exponential backoff. Each processed row also writes a JSON backup under
+``<csv_dir>/<csv_stem>_yt_per_prompt/`` (or ``--prompt-backup-dir/<csv_stem>/``).
+
 Requires: GEMINI_API_KEY or GOOGLE_API_KEY, backend deps (torch, laion_clap, ...).
 Run from repo: ``python -m Evaluation.yt_scores_tango_audioldm`` with cwd ``backend``.
 """
 
-from __future__ import annotations
+import sys
+import os
+import torch
+# Get absolute path of project root (one level up from current notebook)
+project_root = os.path.abspath("..")
+
+# Add to sys.path if not already
+if project_root not in sys.path:
+    sys.path.append(project_root)
+# Cinemaudio-studio root (for tango_new when using Tango2)
+cinema_studio_root = os.path.abspath(os.path.join(project_root, ".."))
+if cinema_studio_root not in sys.path:
+    sys.path.append(cinema_studio_root)       
+print("Project root added to sys.path:", project_root)
+# from __future__ import annotations
 from Variable.dataclases import AudioCue
 from dotenv import load_dotenv
 
@@ -23,9 +41,11 @@ import csv
 import json
 import logging
 import os
+import random
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 _EVAL_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -100,6 +120,58 @@ def _parse_json_from_model_text(response_text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+_GEMINI_TRANSIENT_HTTP_CODES = frozenset({408, 429, 502, 503, 504})
+
+
+def _is_transient_gemini_error(exc: BaseException) -> bool:
+    """True for rate limits / overload / temporary upstream failures."""
+    code = getattr(exc, "code", None)
+    if isinstance(code, int) and code in _GEMINI_TRANSIENT_HTTP_CODES:
+        return True
+    # google.genai.errors.ServerError / ClientError
+    mod = type(exc).__module__
+    if mod.startswith("google.genai") and code is not None:
+        try:
+            c = int(code)
+        except (TypeError, ValueError):
+            return False
+        return c in _GEMINI_TRANSIENT_HTTP_CODES
+    return False
+
+
+def _generate_content_with_retries(
+    client: Any,
+    *,
+    model_name: str,
+    contents: List[Any],
+    max_retries: int,
+    retry_base_sec: float,
+) -> Any:
+    """Call ``generate_content`` with extra backoff beyond SDK defaults (503 spikes)."""
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return client.models.generate_content(
+                model=model_name,
+                contents=contents,
+            )
+        except BaseException as e:
+            last_exc = e
+            if attempt >= max_retries or not _is_transient_gemini_error(e):
+                raise
+            delay = retry_base_sec * (2**attempt) + random.uniform(0.25, 1.25)
+            logger.warning(
+                "[YT-GEMINI] transient error (%s); retry %d/%d in %.1fs",
+                _exc_csv(e, max_len=400),
+                attempt + 1,
+                max_retries,
+                delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _wait_upload_active(client: Any, f: Any, timeout_s: float = 120.0) -> Any:
     """Poll file state until ACTIVE (Files API)."""
     deadline = time.time() + timeout_s
@@ -128,6 +200,8 @@ def gemini_cues_from_wav(
     model_name: str,
     *,
     inline_max_bytes: int = 18 * 1024 * 1024,
+    max_retries: int = 10,
+    retry_base_sec: float = 3.0,
 ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     """
     Returns (list of cue dicts from model JSON, error_message).
@@ -165,9 +239,12 @@ def gemini_cues_from_wav(
         audio_part = up
 
     try:
-        response = client.models.generate_content(
-            model=model_name,
+        response = _generate_content_with_retries(
+            client,
+            model_name=model_name,
             contents=[GEMINI_CLIP_PROMPT, audio_part],
+            max_retries=max_retries,
+            retry_base_sec=retry_base_sec,
         )
     finally:
         if upload_name:
@@ -299,6 +376,72 @@ def _row_fully_done(row: Dict[str, Any]) -> bool:
     return False
 
 
+def _atomic_write_json(path: str, data: Dict[str, Any]) -> None:
+    dname = os.path.dirname(path)
+    if dname:
+        os.makedirs(dname, exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+    os.replace(tmp_path, path)
+
+
+def _per_prompt_backup_filename(row_idx: int, wav_path: str) -> str:
+    stem = os.path.splitext(os.path.basename(wav_path))[0] or "prompt"
+    stem = re.sub(r"[^\w\-.]", "_", stem)[:120]
+    return f"row_{row_idx:05d}_{stem}.json"
+
+
+def _save_per_prompt_result_backup(
+    *,
+    backup_dir: str,
+    csv_path: str,
+    row_idx: int,
+    row: Dict[str, Any],
+    gemini_model: str,
+    cue_dicts: Optional[List[Dict[str, Any]]],
+    from_cache: bool,
+    dry_run: bool,
+    stage: str,
+) -> None:
+    """
+    Write one JSON file per processed row and log/print a one-line summary.
+    ``stage`` is a short tag: gemini_error, dry_run, eval_error, ok.
+    """
+    wav = (row.get("audio_wav_path") or "").strip()
+    fname = _per_prompt_backup_filename(row_idx, wav or "missing.wav")
+    out_path = os.path.join(backup_dir, fname)
+    payload: Dict[str, Any] = {
+        "stage": stage,
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_csv": os.path.abspath(csv_path),
+        "row_index": row_idx,
+        "gemini_model": gemini_model,
+        "dry_run": dry_run,
+        "from_cached_cues": from_cache,
+        "story_prompt": row.get("story_prompt") or "",
+        "audio_wav_path": wav,
+        "total_seconds": row.get("total_seconds"),
+        "cues": cue_dicts if cue_dicts is not None else [],
+        "yt_coverage_score": row.get("yt_coverage_score"),
+        "yt_sync_score": row.get("yt_sync_score"),
+        "yt_gemini_eval_error": row.get("yt_gemini_eval_error") or "",
+        "yt_gemini_cues_json_cell": row.get("yt_gemini_cues_json") or "",
+    }
+    _atomic_write_json(out_path, payload)
+    cov = row.get("yt_coverage_score")
+    sync = row.get("yt_sync_score")
+    err = (row.get("yt_gemini_eval_error") or "")[:240]
+    summary = (
+        f"[YT-PROMPT-BACKUP] stage={stage} row={row_idx} cues={len(cue_dicts or [])} "
+        f"cov={cov!r} sync={sync!r} file={out_path}"
+    )
+    if err:
+        summary += f" err={err!r}"
+    print(summary)
+    logger.info(summary)
+
+
 def _write_results_csv_atomic(
     csv_path: str, fieldnames: List[str], rows: List[Dict[str, Any]]
 ) -> None:
@@ -320,6 +463,9 @@ def process_results_csv(
     gemini_model: str,
     dry_run: bool,
     force: bool,
+    gemini_max_retries: int,
+    gemini_retry_base_sec: float,
+    prompt_backup_dir: Optional[str],
 ) -> None:
     new_cols = [
         "yt_coverage_score",
@@ -335,6 +481,19 @@ def process_results_csv(
         for c in new_cols:
             if c not in fieldnames:
                 fieldnames.append(c)
+
+    csv_abs = os.path.abspath(csv_path)
+    stem = os.path.splitext(os.path.basename(csv_abs))[0]
+    if prompt_backup_dir:
+        backup_dir = os.path.abspath(
+            os.path.join(prompt_backup_dir, stem)
+        )
+    else:
+        backup_dir = os.path.join(
+            os.path.dirname(csv_abs), f"{stem}_yt_per_prompt"
+        )
+        backup_dir = os.path.abspath(backup_dir)
+    logger.info("[YT-SCORES] Per-prompt JSON backups -> %s", backup_dir)
 
     if not dry_run:
         old_cols = set(reader.fieldnames or [])
@@ -387,7 +546,12 @@ def process_results_csv(
 
         if cue_dicts is None:
             try:
-                cue_dicts, gemini_err = gemini_cues_from_wav(wav, gemini_model)
+                cue_dicts, gemini_err = gemini_cues_from_wav(
+                    wav,
+                    gemini_model,
+                    max_retries=gemini_max_retries,
+                    retry_base_sec=gemini_retry_base_sec,
+                )
             except Exception as e:
                 gemini_err = _exc_csv(e)
                 logger.exception("[YT-SCORES] row=%d Gemini call failed", idx)
@@ -399,6 +563,17 @@ def process_results_csv(
                 row["yt_gemini_cues_json"] = ""
                 updated += 1
                 logger.error("[YT-SCORES] row=%d %s", idx, gemini_err)
+                _save_per_prompt_result_backup(
+                    backup_dir=backup_dir,
+                    csv_path=csv_path,
+                    row_idx=idx,
+                    row=row,
+                    gemini_model=gemini_model,
+                    cue_dicts=None,
+                    from_cache=from_cache,
+                    dry_run=dry_run,
+                    stage="gemini_error",
+                )
                 if not dry_run:
                     _write_results_csv_atomic(csv_path, fieldnames, rows)
                     logger.info(
@@ -421,8 +596,20 @@ def process_results_csv(
         )
 
         if dry_run:
+            row["yt_gemini_cues_json"] = cues_json_cell
             logger.info(
                 "[YT-SCORES] row=%d dry-run: skip evaluator + CSV cells", idx
+            )
+            _save_per_prompt_result_backup(
+                backup_dir=backup_dir,
+                csv_path=csv_path,
+                row_idx=idx,
+                row=row,
+                gemini_model=gemini_model,
+                cue_dicts=cue_dicts,
+                from_cache=from_cache,
+                dry_run=True,
+                stage="dry_run",
             )
             continue
 
@@ -439,6 +626,17 @@ def process_results_csv(
             row["yt_sync_score"] = ""
             updated += 1
             logger.exception("[YT-SCORES] row=%d evaluator failed", idx)
+            _save_per_prompt_result_backup(
+                backup_dir=backup_dir,
+                csv_path=csv_path,
+                row_idx=idx,
+                row=row,
+                gemini_model=gemini_model,
+                cue_dicts=cue_dicts,
+                from_cache=from_cache,
+                dry_run=False,
+                stage="eval_error",
+            )
             _write_results_csv_atomic(csv_path, fieldnames, rows)
             logger.info(
                 "[YT-SCORES] checkpoint saved %s after row=%d", csv_path, idx
@@ -458,6 +656,17 @@ def process_results_csv(
             row["yt_gemini_eval_error"],
         )
         updated += 1
+        _save_per_prompt_result_backup(
+            backup_dir=backup_dir,
+            csv_path=csv_path,
+            row_idx=idx,
+            row=row,
+            gemini_model=gemini_model,
+            cue_dicts=cue_dicts,
+            from_cache=from_cache,
+            dry_run=False,
+            stage="ok",
+        )
         _write_results_csv_atomic(csv_path, fieldnames, rows)
         logger.info(
             "[YT-SCORES] checkpoint saved %s after row=%d", csv_path, idx
@@ -478,18 +687,18 @@ def main() -> None:
     default_results = os.path.join(_EVAL_DIR, "Results")
     parser.add_argument(
         "--audioldm-csv",
-        default=os.path.join(default_results, "audioldm2_results.csv"),
+        default=os.path.join(default_results, "Results_from_server/audioldm2_results.csv"),
         help="Path to audioldm2_results.csv",
     )
     parser.add_argument(
         "--tango-csv",
-        default=os.path.join(default_results, "tango2_results.csv"),
+        default=os.path.join(default_results, "Results_from_server/tango2_results.csv"),
         help="Path to tango2_results.csv",
     )
     parser.add_argument(
         "--gemini-model",
         default=os.environ.get(
-            "GEMINI_AUDIO_ANALYSIS_MODEL", "gemini-2.5-flash"),
+            "GEMINI_AUDIO_ANALYSIS_MODEL", "gemini-3-flash-preview"),
         help="Gemini model id for audio understanding (override with GEMINI_AUDIO_ANALYSIS_MODEL)",
     )
     parser.add_argument(
@@ -507,6 +716,26 @@ def main() -> None:
         "--force",
         action="store_true",
         help="Reprocess every row: ignore resume skip and cached yt_gemini_cues_json (calls Gemini again)",
+    )
+    parser.add_argument(
+        "--gemini-max-retries",
+        type=int,
+        default=10,
+        help="Extra retries for transient Gemini errors (HTTP 408/429/502/503/504) with exponential backoff",
+    )
+    parser.add_argument(
+        "--gemini-retry-base-sec",
+        type=float,
+        default=3.0,
+        help="Initial backoff seconds for Gemini retries (doubles each attempt, plus jitter)",
+    )
+    parser.add_argument(
+        "--prompt-backup-dir",
+        default=None,
+        help=(
+            "Optional base directory for per-row JSON backups; files go under "
+            "<this_dir>/<csv_stem>/. Default: <csv_dir>/<csv_stem>_yt_per_prompt/"
+        ),
     )
     parser.add_argument(
         "--debug",
@@ -545,6 +774,9 @@ def main() -> None:
             gemini_model=args.gemini_model,
             dry_run=args.dry_run,
             force=args.force,
+            gemini_max_retries=args.gemini_max_retries,
+            gemini_retry_base_sec=args.gemini_retry_base_sec,
+            prompt_backup_dir=args.prompt_backup_dir,
         )
 
 
